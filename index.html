@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>깡통 뽑기 · Tin Can Roulette</title>
+<meta name="description" content="An old tin roulette sets the group order, then a physics claw machine picks one student can from each group. Absent? Pick again.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Barlow+Condensed:wght@500;600;700&family=Do+Hyeon&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="logo">
+    <svg class="can-ico" viewBox="0 0 34 44" aria-hidden="true">
+      <rect x="2" y="2" width="30" height="40" rx="3" fill="#d9dcdf" stroke="#1c1b1f" stroke-width="2.5"/>
+      <rect x="2" y="10" width="30" height="24" fill="#e2372c" stroke="#1c1b1f" stroke-width="2"/>
+      <path d="M17 15l2 4.2 4.6.6-3.3 3.2.8 4.6L17 25.4 12.9 27.6l.8-4.6-3.3-3.2 4.6-.6z" fill="#f3b21b" stroke="#1c1b1f" stroke-width="1.2"/>
+    </svg>
+    <div class="kr">깡통 뽑기</div>
+    <div class="en">TIN CAN ROULETTE<small>Order wheel · claw · roll call</small></div>
+  </div>
+  <ol class="steps" id="steps" aria-label="Progress">
+    <li data-step="1"><b>1</b>Roster</li>
+    <li data-step="2"><b>2</b>Spin order</li>
+    <li data-step="3"><b>3</b>Catch cans</li>
+  </ol>
+  <div class="tools">
+    <button class="chip roster" id="openRoster" aria-haspopup="dialog"><span class="n" id="rosterCount">16 · 4</span> Roster</button>
+    <button class="chip" id="hard" aria-pressed="false" title="The claw can slip, like a real arcade">Hard claw</button>
+    <button class="chip" id="sound" aria-pressed="true">Sound</button>
+  </div>
+</header>
+
+<main class="floor">
+  <section class="plate" aria-labelledby="wheelTitle">
+    <h2 id="wheelTitle">Order Wheel<small>Flick the wheel or press spin</small></h2>
+    <canvas id="wheel" width="330" height="330" aria-label="Tin roulette wheel. The ball decides which group plays next."></canvas>
+    <ul class="legend" id="legend"></ul>
+    <button class="bigbtn" id="spin">SPIN<kbd>SPACE</kbd></button>
+  </section>
+
+  <section class="cabinet" aria-label="Claw machine">
+    <div class="marquee">
+      <div class="bulbs" aria-hidden="true"></div>
+      <div class="kr">깡통 뽑기</div>
+      <div class="en">★ ONE CAN PER GROUP ★</div>
+      <div class="bulbs" aria-hidden="true"></div>
+    </div>
+    <div class="glass">
+      <canvas id="machine" width="460" height="580" aria-label="Claw machine window filled with name cans"></canvas>
+      <div class="banner" id="banner" aria-hidden="true"></div>
+      <div class="reveal" id="reveal" hidden>
+        <div class="card" id="card" role="dialog" aria-labelledby="rvName">
+          <canvas id="portrait" width="150" height="170" aria-hidden="true"></canvas>
+          <div class="rv-group" id="rvGroup"></div>
+          <div class="rv-name" id="rvName"></div>
+          <div class="rv-btns">
+            <button id="here">HERE<small>출석 · H</small></button>
+            <button id="absent">ABSENT<small>결석 · X</small></button>
+          </div>
+          <div class="stamp" id="stamp"></div>
+        </div>
+      </div>
+    </div>
+    <div class="deck">
+      <div class="joy" id="joy" role="slider" aria-label="Claw position" aria-valuemin="-1" aria-valuemax="1" aria-valuenow="0" tabindex="0">
+        <div class="joy-base"></div>
+        <div class="joy-stick" id="joyStick"><div class="joy-ball"></div></div>
+      </div>
+      <div class="counter" aria-live="polite">
+        <canvas id="flip" width="58" height="44" aria-hidden="true"></canvas>
+        <div><div class="msg" id="msg">LOADING…</div><div class="sub" id="sub"></div></div>
+      </div>
+      <button class="grab" id="grab">GRAB</button>
+      <div class="deck-aux">
+        <span>Drag the stick or ← → · Space grabs</span>
+        <button class="mini" id="auto">Auto-aim</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="plate" aria-labelledby="ticketTitle">
+    <h2 id="ticketTitle">Prize Tickets<small id="ticketSub">Order and picks</small></h2>
+    <ol class="tickets" id="tickets"></ol>
+    <div class="endrow" id="endRow" hidden>
+      <button class="btn go" id="again">Rematch</button>
+      <button class="btn" id="copy">Copy results</button>
+    </div>
+  </section>
+</main>
+
+<div class="modal" id="modal" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="rosterTitle">
+    <div class="sheet-head">
+      <h2 id="rosterTitle">Roster</h2>
+      <span class="count" id="rCount"></span>
+    </div>
+    <div class="sheet-body">
+      <div class="bar">
+        <div class="stepper" aria-label="Number of groups">
+          <button id="gMinus" aria-label="Fewer groups">−</button>
+          <output id="gOut">4 groups</output>
+          <button id="gPlus" aria-label="More groups">+</button>
+        </div>
+        <button class="btn alt" id="shuffle">Shuffle into groups</button>
+        <button class="btn" id="togglePaste" aria-expanded="false">Paste a list</button>
+      </div>
+      <div class="paste" id="paste" hidden>
+        <textarea id="pasteText" spellcheck="false" placeholder="One name per line.&#10;Lines like “Group 1” or “1조” start a new group."></textarea>
+        <div class="bar">
+          <button class="btn go" id="pasteReplace">Replace roster</button>
+          <button class="btn" id="pasteAdd">Add to roster</button>
+        </div>
+      </div>
+      <p class="hint"><b>Tap</b> a name to mark it absent today (no can). <b>Drag</b> a name to move it to another group.</p>
+      <div class="gcols" id="gcols"></div>
+      <p class="err" id="rErr" hidden></p>
+    </div>
+    <div class="sheet-foot">
+      <button class="btn" id="rDefault">Reset to class list</button>
+      <div class="right">
+        <button class="btn" id="rCancel">Cancel</button>
+        <button class="btn go" id="rSave">Save &amp; restart</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<canvas id="fx" aria-hidden="true"></canvas>
+
+<script src="lib/matter.min.js"></script>
+<script src="js/sfx.js"></script>
+<script src="js/art.js"></script>
+<script src="js/roulette.js"></script>
+<script src="js/machine.js"></script>
+<script src="js/roster.js"></script>
+<script src="js/game.js"></script>
+</body>
+</html>
