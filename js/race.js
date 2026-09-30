@@ -586,23 +586,40 @@ window.Race = function (canvas, hooks) {
   function drawHud() {
     const live = state === 'run' || state === 'done';
     const ranked = racers.map((r, i) => i).sort((a, b) => (racers[a].place || 99) - (racers[b].place || 99) || (live ? racers[b].x - racers[a].x : a - b));
-    const sg = g.createLinearGradient(0, 0, 340, 0); sg.addColorStop(0, 'rgba(14,13,16,.66)'); sg.addColorStop(1, 'rgba(14,13,16,0)');
-    g.fillStyle = sg; g.fillRect(0, 0, 340, 20 + ranked.length * 21);
+    // standings and clock share one opaque timing bar across the top, so the printed habitat plaques
+    // on the backdrop never sit under the standings
+    const BAR = 34, CLOCK_W = 150, room = W - CLOCK_W - 16;
+    g.fillStyle = 'rgba(14,13,16,.94)'; g.fillRect(0, 0, W, BAR);
+    g.fillStyle = 'rgba(255,233,196,.28)'; g.fillRect(0, BAR, W, 1);
     g.textBaseline = 'middle';
-    ranked.forEach((ri, k) => {
-      const r = racers[ri], sty = GROUP[r.grp.sty % GROUP.length], y = 22 + k * 21;
-      g.fillStyle = sty.bg; g.fillRect(20, y - 7, 3, 14);
-      if (live) { font(700, 13, 'semi-condensed'); g.textAlign = 'right'; g.fillStyle = k === 0 ? LAMP : 'rgba(242,241,238,.6)'; g.fillText(String(k + 1), 42, y); }
-      font(600, 13, 'semi-condensed'); g.textAlign = 'left'; g.fillStyle = 'rgba(242,241,238,.94)';
-      const x0 = live ? 50 : 32; g.fillText(r.grp.name, x0, y);
-      const w = g.measureText(r.grp.name).width; font(400, 13, 'semi-condensed'); g.fillStyle = 'rgba(242,241,238,.55)'; g.fillText(kindOf(r), x0 + w + 8, y);
+    const entries = ranked.map(ri => ({ r: racers[ri], name: racers[ri].grp.name, kind: kindOf(racers[ri]) }));
+    const measure = withKind => entries.reduce((s, e) => {
+      font(600, 13, 'semi-condensed'); let w = (live ? 16 : 0) + 9 + g.measureText(e.name).width + 20;
+      if (withKind) { font(400, 12, 'semi-condensed'); w += g.measureText(e.kind).width + 6; }
+      return s + w;
+    }, 16);
+    let withKind = measure(true) <= room;
+    if (!withKind && measure(false) > room) {
+      // still too wide: shorten the group names evenly until the bar fits
+      const each = (room - 16) / entries.length - (live ? 16 : 0) - 29;
+      font(600, 13, 'semi-condensed');
+      for (const e of entries) { let n = e.name; while (n.length > 2 && g.measureText(n + '…').width > each) n = n.slice(0, -1); if (n !== e.name) e.name = n + '…'; }
+    }
+    let x = 16;
+    entries.forEach((e, k) => {
+      const sty = GROUP[e.r.grp.sty % GROUP.length], y = BAR / 2 + 1;
+      if (live) { font(700, 13, 'semi-condensed'); g.textAlign = 'left'; g.fillStyle = k === 0 ? LAMP : 'rgba(242,241,238,.6)'; g.fillText(String(k + 1), x, y); x += 16; }
+      g.fillStyle = sty.bg; g.fillRect(x, y - 7, 3, 14); x += 9;
+      font(600, 13, 'semi-condensed'); g.textAlign = 'left'; g.fillStyle = 'rgba(242,241,238,.94)'; g.fillText(e.name, x, y);
+      x += g.measureText(e.name).width + 6;
+      if (withKind) { font(400, 12, 'semi-condensed'); g.fillStyle = 'rgba(242,241,238,.55)'; g.fillText(e.kind, x, y); x += g.measureText(e.kind).width; }
+      x += 14;
     });
     // race clock: stops on the winner and shows the thousandths, like a real timing board
-    const cg = g.createLinearGradient(W, 0, W - 180, 0); cg.addColorStop(0, 'rgba(14,13,16,.66)'); cg.addColorStop(1, 'rgba(14,13,16,0)');
-    g.fillStyle = cg; g.fillRect(W - 180, 0, 180, 48);
+    g.fillStyle = 'rgba(255,233,196,.18)'; g.fillRect(W - CLOCK_W, 6, 1, BAR - 12);
     const secs = live ? (crossed.length ? TOF(0) : Math.max(0, t)) : 0, txt = crossed.length ? secs.toFixed(3) : secs.toFixed(2);
-    font(600, 22); g.fillStyle = LAMP; g.textAlign = 'center';
-    for (let k = txt.length - 1, cx = W - 22; k >= 0; k--) { const cw = txt[k] === '.' ? 7 : 13.5; g.fillText(txt[k], cx - cw / 2, 25); cx -= cw; }
+    font(600, 20); g.fillStyle = LAMP; g.textAlign = 'center';
+    for (let k = txt.length - 1, cx = W - 20; k >= 0; k--) { const cw = txt[k] === '.' ? 6 : 12.5; g.fillText(txt[k], cx - cw / 2, BAR / 2 + 1); cx -= cw; }
     if (state === 'count') {
       const n = Math.ceil(count), f = count - Math.floor(count);
       g.save(); g.globalAlpha = clamp(f * 3, 0, 1); g.shadowColor = 'rgba(0,0,0,.6)'; g.shadowBlur = 40;
