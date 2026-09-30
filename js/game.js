@@ -14,7 +14,7 @@
 
   let roster = Roster.load();
   let groups = [];                  // { no, name, sty, animal, members: [names present] }
-  let act = 'order', mode = 'wheel';
+  let act = 'order', mode = 'wheel', orderReady = false;
   let remaining = [], order = [], results = [], turn = -1;
   let revealCan = null, revealAt = 0, holdTimer = null, holdUntil = 0, lastMark = null, pendingNext = null, absentTimer = null;
   try { mode = localStorage.getItem('rcc-order-mode') === 'race' ? 'race' : 'wheel'; } catch (e) {}
@@ -44,24 +44,23 @@
   // ---------- the order wheel ----------
   const wheel = Roulette($('#wheel'), {
     unlock: SFX.unlock, sfx, roll: v => SFX.roll(v),
-    onLaunch() { $('#spin').disabled = true; say('BALL ON THE TRACK', 'It slows, drops and lands in a pocket.'); },
-    onWeak() { say('TOO SLOW TO LAUNCH', 'Drag the wheel and let go faster, or press Spin.'); },
+    onLaunch() { $('#spin').disabled = true; say('BALL IN PLAY'); },
+    onWeak() { say('TOO SLOW'); },
     onResult(gi) {
       const g = remaining[gi];
       wheel.lock(true); sfx('ding');
-      say(`${ORD[order.length]} · ${upper(short(g.name))}`, `${g.name} goes ${WORD[order.length]}.`);
+      say(`${ORD[order.length]} · ${upper(short(g.name))}`);
       setTimeout(() => {
         remaining.splice(gi, 1); order.push(g); renderRows(order.length - 1);
         if (remaining.length === 1) {
           const last = remaining.pop();
           setTimeout(() => {
             order.push(last); wheel.setGroups([]); renderRows(order.length - 1);
-            say('ORDER SET', `${last.name} goes last. The crane loads ${order[0].name} now.`);
-            setTimeout(startPlay, 1900);
+            awaitCrane();
           }, 700);
         } else {
           wheel.setGroups(remaining); wheel.lock(false); $('#spin').disabled = false;
-          say(`SPIN FOR ${ORD[order.length]}`, `${plural(remaining.length, 'group')} left on the wheel.`);
+          say(`SPIN FOR ${ORD[order.length]}`, `${plural(remaining.length, 'group')} left`);
         }
       }, 1500);
     },
@@ -74,18 +73,17 @@
     onFinish(list) {
       order = list.slice(); remaining = [];
       renderRows();
-      say('ORDER SET', `${order[0].name} goes first. The crane loads now.`);
-      setTimeout(startPlay, 1800);
+      awaitCrane();
     },
   });
 
   // ---------- the crane ----------
   const machine = Machine($('#machine'), {
     sfx, motor: (l, p) => SFX.motor(l, p),
-    onReady() { say('COUNTDOWN', 'Then the crane picks one name. Every name has the same odds.'); },
-    onSeek() { say('CRANE IS CHOOSING', 'It stops over one can and drops.'); },
-    onMiss() { sfx('miss'); say('NO GRAB', 'Nothing in the chute. The crane goes again.'); },
-    onSlip() { say('CAN SLIPPED', 'Weak grip is on. The crane goes again.'); },
+    onReady() { say('COUNTDOWN'); },
+    onSeek() { say('CHOOSING'); },
+    onMiss() { sfx('miss'); say('NO GRAB'); },
+    onSlip() { say('SLIPPED'); },
     onPick(can) { showReveal(can); },
     onBeat() {},
   });
@@ -102,11 +100,11 @@
   function reset() {
     clearTimeout(holdTimer); clearTimeout(pendingNext); clearTimeout(absentTimer); holdTimer = pendingNext = absentTimer = null;
     buildGroups();
-    setAct('order'); remaining = groups.slice(); order = []; results = []; turn = -1; revealCan = null; lastMark = null;
+    setAct('order'); orderReady = false; remaining = groups.slice(); order = []; results = []; turn = -1; revealCan = null; lastMark = null;
     $('#reveal').hidden = true; $('#board').hidden = true;
     wheel.setGroups(remaining); wheel.lock(false);
     machine.attract(groups.flatMap(g => g.members));
-    sign('ROLL CALL CRANE', 'One pick per group');
+    sign('ROLL CALL CRANE');
     applyMode();
     race.setup(groups);
     renderRows();
@@ -117,11 +115,11 @@
     $('#modeRace').setAttribute('aria-checked', String(mode === 'race'));
     $('#spinLabel').textContent = mode === 'wheel' ? 'Spin' : 'Start the race';
     $('#spin').disabled = groups.length < 2;
-    if (groups.length < 2) { say('NEEDS 2 GROUPS', 'Open the roster and add a group.'); return; }
-    if (mode === 'wheel') say('READY', 'Spin the wheel. The ball sets which group goes first.');
+    if (groups.length < 2) { say('NEEDS 2 GROUPS', 'Roster'); return; }
+    if (mode === 'wheel') say('READY');
     else {
       const names = groups.map(g => (animalOf(g.animal) || { name: g.animal }).name.toLowerCase());
-      say('RACE READY', `${plural(groups.length, 'animal')} on the line, one per group. The finishing order sets the order.`);
+      say('RACE READY');
       $('#sub').title = names.join(', ');
     }
   }
@@ -134,11 +132,18 @@
   $('#modeWheel').addEventListener('click', () => setMode('wheel'));
   $('#modeRace').addEventListener('click', () => setMode('race'));
 
+  // the order is set: hold here until the teacher sends it to the crane
+  function awaitCrane() {
+    orderReady = true;
+    $('#spinLabel').textContent = 'To the crane'; $('#spin').disabled = false;
+    say('ORDER SET');
+  }
   function spin() {
     SFX.unlock();
     if (act !== 'order' || groups.length < 2) return;
+    if (orderReady) { orderReady = false; startPlay(); return; }
     if (mode === 'wheel') wheel.spin();
-    else if (race.state === 'ready') { $('#spin').disabled = true; race.start(); say('RACE ON', 'The finishing order sets the order of the groups.'); }
+    else if (race.state === 'ready') { $('#spin').disabled = true; race.start(); say('RACE ON'); }
   }
   $('#spin').addEventListener('click', spin);
 
@@ -182,8 +187,8 @@
     const g = order[i], copies = copiesFor(g.members.length);
     machine.setRider(g.animal, bibOf(g));
     machine.play(g.members, g.name, copies);
-    sign(upper(g.name), `Now picking · ${plural(g.members.length, 'name')}`);
-    say('COIN IN', `${g.name}: ${plural(g.members.length, 'name')}, ${copies} cans each. The crane starts on its own.`);
+    sign(upper(g.name), plural(g.members.length, 'name'));
+    say('COIN IN', `${plural(g.members.length, 'name')} · ${g.members.length * copies} cans`);
     sfx('coin'); renderRows();
   }
   function nextTurn() { if (turn + 1 < order.length) loadTurn(turn + 1); else finish(); }
@@ -192,8 +197,8 @@
     const ol = $('#boardRows'); ol.innerHTML = $('#rows').innerHTML; ol.querySelectorAll('li').forEach(li => li.classList.remove('cur', 'pop'));
     $('#boardDate').textContent = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
     $('#board').hidden = false;
-    sign('ROLL CALL DONE', `${plural(order.length, 'group')} picked`);
-    say('ALL GROUPS DONE', 'Copy the list or run again.');
+    sign('ROLL CALL DONE');
+    say('DONE');
     sfx('ding');
   }
 
@@ -209,9 +214,12 @@
     pg.setTransform(pdpr, 0, 0, pdpr, 0, 0); pg.clearRect(0, 0, 520, 560);
     // a pool of lamp light on the floor
     // an elliptical pool that fades out well inside the canvas, so no edge shows on the black room
+    const beam = pg.createLinearGradient(0, 0, 0, 500);
+    beam.addColorStop(0, 'rgba(255,233,196,0)'); beam.addColorStop(1, 'rgba(255,233,196,.16)');
+    pg.fillStyle = beam; pg.beginPath(); pg.moveTo(190, 0); pg.lineTo(330, 0); pg.lineTo(470, 500); pg.lineTo(50, 500); pg.closePath(); pg.fill();
     pg.save(); pg.translate(260, 478); pg.scale(1, .3);
     const pool = pg.createRadialGradient(0, 0, 8, 0, 0, 250);
-    pool.addColorStop(0, 'rgba(255,233,196,.3)'); pool.addColorStop(1, 'rgba(255,233,196,0)');
+    pool.addColorStop(0, 'rgba(255,233,196,.6)'); pool.addColorStop(1, 'rgba(255,233,196,0)');
     pg.fillStyle = pool; pg.beginPath(); pg.arc(0, 0, 250, 0, Math.PI * 2); pg.fill(); pg.restore();
     if (can) {
       const k = Math.min(1, rv.t / 1.1), e = 1 - Math.pow(1 - k, 3);
@@ -243,7 +251,7 @@
     fitName(f, maxW); fitName(l, maxW);
     revealAt = performance.now();
     sfx('vacuum', 500);
-    say('IN THE CHUTE', `${can.name}. Mark present (P) or absent (A).`);
+    say('IN THE CHUTE', can.name);
     renderRows();
     if (!rv.running) { rv.running = true; rv.last = performance.now(); requestAnimationFrame(paintPortrait); }
     setTimeout(() => { if (revealCan === can) { f.classList.add('in'); sfx('sting'); rv.pose = 'cheer'; } }, reduced ? 0 : 1100);
@@ -264,10 +272,10 @@
     lastMark = { kind: 'here', turn, can };
     $('#undo').hidden = false;
     const nextG = order[turn + 1];
-    say('PRESENT', nextG ? `${can.name}. ${nextG.name} loads next.` : `${can.name}. That was the last group.`);
+    say('PRESENT', can.name);
     const holdMs = 4000;
     const nx = $('#rvNext'); nx.innerHTML = '';
-    nx.append(nextG ? `Next: ${nextG.name}. Space to go now.` : 'That was the last group. Space to see the list.');
+    nx.append(nextG ? `Next · ${nextG.name}` : 'Last group');
     const barEl = document.createElement('span'); barEl.className = 'bar'; nx.append(barEl);
     barEl.animate([{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }], { duration: holdMs, easing: 'linear', fill: 'forwards' });
     holdUntil = performance.now() + holdMs;
@@ -299,10 +307,10 @@
       const left = machine.students();
       if (left > 0) {
         machine.resume();
-        say('ABSENT', `${plural(left, 'name')} left in ${g.name}. The crane goes again.`);
+        say('ABSENT', `${plural(left, 'name')} left`);
       } else {
         results[turn].none = true; renderRows();
-        say('NOBODY HERE', order[turn + 1] ? `No one from ${g.name} is here. ${order[turn + 1].name} loads next.` : `No one from ${g.name} is here.`);
+        say('NOBODY HERE', g.name);
         pendingNext = setTimeout(nextTurn, 2400);
       }
     }, 1300);
@@ -315,7 +323,7 @@
       results[turn].pick = null; revealCan = m.can; revealAt = 0; lastMark = null;
       $('#stamp').className = 'stamp'; $('#rvNext').innerHTML = ''; $('#undo').hidden = true;
       $('#here').disabled = $('#absent').disabled = false;
-      say('UNDONE', `${m.can.name}. Mark present (P) or absent (A).`);
+      say('UNDONE', m.can.name);
       renderRows();
     } else if (m.kind === 'absent' && (absentTimer || pendingNext || machine.mode === 'aim' || machine.mode === 'seek' || machine.mode === 'load')) {
       clearTimeout(pendingNext); pendingNext = null;
@@ -327,11 +335,11 @@
         clearTimeout(absentTimer); absentTimer = null;
         rv.squash = 0; rv.pose = 'cheer'; revealCan = m.can; revealAt = 0;
         $('#stamp').className = 'stamp'; $('#undo').hidden = true; $('#here').disabled = $('#absent').disabled = false;
-        say('UNDONE', `${m.can.name}. Mark present (P) or absent (A).`);
+        say('UNDONE', m.can.name);
       } else {
         machine.restoreStudent(m.can.name);
         if (machine.mode !== 'aim' && machine.mode !== 'seek' && machine.mode !== 'load') machine.resume();
-        say('UNDONE', `${m.can.name} is back in the machine.`);
+        say('UNDONE', m.can.name);
       }
       renderRows();
     }
@@ -385,7 +393,7 @@
     const btn = $('#copy');
     (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject())
       .then(() => { btn.textContent = 'Copied'; setTimeout(() => btn.textContent = 'Copy list', 1500); })
-      .catch(() => say('CLIPBOARD BLOCKED', 'Select the list and copy it by hand.'));
+      .catch(() => say('CLIPBOARD BLOCKED'));
   });
 
   addEventListener('keydown', e => {

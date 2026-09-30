@@ -18,8 +18,8 @@
       <button role="radio" id="modeWheel" aria-checked="true">Wheel</button>
       <button role="radio" id="modeRace" aria-checked="false">Race</button>
     </div>
-    <div class="wheelbox"><canvas id="wheel" width="330" height="330" aria-label="Order wheel. The pocket the ball lands in sets the next group."></canvas></div>
-    <div class="racebox"><canvas id="race" width="960" height="440" aria-label="Animal race. The finishing order sets the order of the groups."></canvas></div>
+    <div class="wheelbox"><canvas id="wheel" width="330" height="330" aria-label="Order wheel"></canvas></div>
+    <div class="racebox"><canvas id="race" width="960" height="440" aria-label="Animal race"></canvas></div>
     <button class="go" id="spin"><span id="spinLabel">Spin</span> <kbd>Space</kbd></button>
   </section>
 
@@ -37,7 +37,6 @@
     <div class="base">
       <div class="slot" aria-hidden="true"><i></i></div>
       <button class="start" id="start" aria-label="Start the crane now">START</button>
-      <div class="plate-note" aria-hidden="true">Crane picks at random. Every name has the same odds.</div>
     </div>
   </section>
 
@@ -79,7 +78,7 @@
 
 <nav class="teacher" aria-label="Teacher controls">
   <button id="openRoster">Roster <span id="rosterCount"></span></button>
-  <button id="hard" aria-pressed="false" title="Cans can slip out of the claw. The crane then goes again.">Weak grip: off</button>
+  <button id="hard" aria-pressed="false">Weak grip: off</button>
   <button id="sound" aria-pressed="true">Sound: on</button>
   <button id="full">Full screen <kbd>F</kbd></button>
   <button id="keysBtn">Keys <kbd>?</kbd></button>
@@ -88,12 +87,12 @@
 <div class="keys" id="keys" hidden>
   <div class="keys-sheet" role="dialog" aria-label="Keys">
     <dl>
-      <dt>Space</dt><dd>Spin the wheel, start the race, start the crane now, next group</dd>
+      <dt>Space</dt><dd>Spin · Start · Next</dd>
       <dt>P</dt><dd>Present</dd>
-      <dt>A</dt><dd>Absent. The crane picks again.</dd>
-      <dt>Z</dt><dd>Undo the last mark</dd>
+      <dt>A</dt><dd>Absent</dd>
+      <dt>Z</dt><dd>Undo</dd>
       <dt>F</dt><dd>Full screen</dd>
-      <dt>M</dt><dd>Sound on or off</dd>
+      <dt>M</dt><dd>Sound</dd>
       <dt>R</dt><dd>Roster</dd>
     </dl>
     <button class="go" id="keysClose">Close</button>
@@ -117,13 +116,12 @@
         <button class="btn" id="togglePaste" aria-expanded="false">Paste a list</button>
       </div>
       <div class="paste" id="paste" hidden>
-        <textarea id="pasteText" spellcheck="false" placeholder="One name per line.&#10;A line like “Group 2” starts a new group."></textarea>
+        <textarea id="pasteText" spellcheck="false" placeholder="Group 1&#10;Minjun Kim&#10;Sojeong Lee&#10;Group 2&#10;JeongSeop Park"></textarea>
         <div class="bar">
           <button class="btn go" id="pasteReplace">Replace roster</button>
           <button class="btn" id="pasteAdd">Add to roster</button>
         </div>
       </div>
-      <p class="hint">Tap a name: absent today, no cans. Drag a name: move it to another group. Each group races as its animal.</p>
       <div class="gcols" id="gcols"></div>
       <p class="err" id="rErr" hidden></p>
     </div>

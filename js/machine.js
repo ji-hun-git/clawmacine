@@ -806,7 +806,7 @@ window.Machine = function (canvas, hooks) {
   }
   function drawCanBody(g, k, zr) {
     const b = k.body, wob = k.ring > 0 ? Math.sin(k.ring * 70) * k.ring * .08 : 0;
-    const cf = coneAt(b.position.x, b.position.y), lit = 1 - dark * (1 - cf) * .55;
+    const cf = coneAt(b.position.x, b.position.y), lit = 1 - dark * (1 - cf) * .3;
     const o = { lit, rim: k === c.held ? zr : zr * cf * .7 };
     if (k.shift != null) o.labelShift = k.shift; else o.spin = k.spin;
     drawCan(g, k, b.position.x, b.position.y, b.angle + wob, k.w, k.h, o);
@@ -941,7 +941,7 @@ window.Machine = function (canvas, hooks) {
     cg.fillStyle = vg;
     for (const [grow, al] of [[36, .3], [18, .45], [0, 1]]) { cg.globalAlpha = al; conePath(cg, grow); cg.fill(); }
     cg.globalAlpha = 1;
-    const dd = clamp(dark, 0, .92);
+    const dd = clamp(dark * .55, 0, .42);
     dg.setTransform(1, 0, 0, 1, 0, 0); dg.globalCompositeOperation = 'source-over'; dg.clearRect(0, 0, dcv.width, dcv.height);
     dg.fillStyle = `rgba(9,7,11,${dd})`; dg.fillRect(0, 0, dcv.width, dcv.height);
     dg.globalCompositeOperation = 'destination-out'; dg.drawImage(ccv, 0, 0);

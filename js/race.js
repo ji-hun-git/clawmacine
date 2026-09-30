@@ -83,7 +83,6 @@ window.Race = function (canvas, hooks) {
   const TOF = k => racers[finishOrder[Math.min(k, finishOrder.length - 1)]].T;
 
   // ---------- commentary ----------
-  const MARGIN = { shark: 'a fin', turtle: 'a beak', axolotl: 'a gill', redpanda: 'a whisker', pangolin: 'a scale' };
   function say(text) { line = text; lineT = 0; hooks.onLine && hooks.onLine(text); }
   const kindOf = r => (animals()[r.key] || { name: r.key }).name;
   const nameOf = r => `${r.grp.name} (${kindOf(r)})`;
@@ -674,7 +673,7 @@ window.Race = function (canvas, hooks) {
     if (state === 'count') {
       const before = Math.ceil(count); count -= dt; const after = Math.ceil(count);
       if (after !== before && after > 0) sfx('tickLow');
-      if (count <= 0) { state = 'run'; t = 0; sfx('pistol'); say('They are off.'); racers.forEach(r => r.pose = 'run'); }
+      if (count <= 0) { state = 'run'; t = 0; sfx('pistol'); say(''); racers.forEach(r => r.pose = 'run'); }
     }
     if (state !== 'run' && state !== 'done') {
       anim += dt; aimCam(dt, START_X + 150, reduced ? 1 : 1.18, TRACK_MID, 3.2);
@@ -684,7 +683,7 @@ window.Race = function (canvas, hooks) {
     const T0 = TOF(0), T1 = TOF(1), TN = TOF(racers.length - 1);
     const near = !crossed.length && t >= T0 - .9;
     const photo = crossed.length > 0 && t < T1 + .25;
-    if (near && !saidNear) { saidNear = true; sfx('drum', .8); if (racers.length > 1 && T1 - T0 < .16) say('Nothing between them at the line.'); }
+    if (near && !saidNear) { saidNear = true; sfx('drum', .8); }
     let slowTo = near || photo ? .4 : 1;
     if (reduced) slowTo = 1;
     cam.slow += (slowTo - cam.slow) * Math.min(1, dt * 7);
@@ -709,7 +708,7 @@ window.Race = function (canvas, hooks) {
         if (r.place === 1) {
           flash = reduced ? 0 : 1; freeze = reduced ? 0 : .7; sfx('drum', 0); sfx('shutter');
           const gap = racers.length > 1 ? T1 - r.T : 1;
-          say(gap < .16 ? `Photo finish. ${nameOf(r)} by ${MARGIN[r.key] || 'a nose'}.` : `${nameOf(r)} takes it.`);
+          say(gap < .16 ? `Photo finish · ${nameOf(r)}` : `${nameOf(r)} wins`);
           sfx('crowd');
         }
         if (crossed.length === racers.length) { state = 'done'; doneT = 0; }
@@ -721,12 +720,7 @@ window.Race = function (canvas, hooks) {
       const l = leaderAt(t);
       if (l !== leader && t > .9) {
         const r = racers[l];
-        const lines = r.key === 'shark' ? [`${nameOf(r)} is in front. Nobody can explain how.`, `The hammerhead flops into the lead.`]
-          : r.key === 'turtle' ? [`${nameOf(r)} in front. Slow and steady.`, `The turtle takes the lead.`]
-          : r.key === 'pangolin' ? [`${nameOf(r)} rolls into the lead.`, `The pangolin goes to the front.`]
-          : r.key === 'axolotl' ? [`${nameOf(r)} wiggles ahead.`, `The axolotl leads, still smiling.`]
-          : [`${nameOf(r)} bounds into the lead.`, `The red panda goes to the front.`];
-        if (leader !== -1) { say(lines[Math.random() * lines.length | 0]); if (near) sfx('gasp'); }
+        if (leader !== -1) { say(`${nameOf(r)} leads`); if (near) sfx('gasp'); }
         leader = l;
       }
     }
@@ -768,7 +762,7 @@ window.Race = function (canvas, hooks) {
       racers.forEach(r => nose(r.key));
       plan(); draw();
     },
-    start() { if (state !== 'ready') return; state = 'count'; count = 2.4; sfx('tickLow'); racers.forEach(r => r.pose = 'worry'); say('On your marks.'); },
+    start() { if (state !== 'ready') return; state = 'count'; count = 2.4; sfx('tickLow'); racers.forEach(r => r.pose = 'worry'); say(''); },
     step,
     get state() { return state; },
     get drama() { return clamp(drama, 0, 1); },
