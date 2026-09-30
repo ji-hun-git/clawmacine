@@ -650,14 +650,17 @@ window.Machine = function (canvas, hooks) {
     hd.addColorStop(0, 'rgba(0,0,0,.6)'); hd.addColorStop(1, 'rgba(0,0,0,0)');
     g.fillStyle = hd; g.fillRect(0, 0, W, 56);
     g.restore();
-    // the gantry rail across the top front
-    const ry0 = CARR_Y - 12, ry1 = CARR_Y + 1;
-    const under = g.createLinearGradient(0, ry1, 0, ry1 + 12);
-    under.addColorStop(0, 'rgba(0,0,0,.45)'); under.addColorStop(1, 'rgba(0,0,0,0)');
-    g.fillStyle = under; g.fillRect(0, ry1, W, 12);
-    g.fillStyle = steel(g, 0, ry1, 0, ry0); g.fillRect(0, ry0, W, ry1 - ry0);
-    g.fillStyle = 'rgba(0,0,0,.35)'; g.fillRect(0, ry0 + 2.2, W, 1.2);
-    g.fillStyle = 'rgba(255,255,255,.55)'; g.fillRect(0, ry0, W, .75);
+    // the gantry: two round steel rods across the top front, the far one higher (seen a little from above),
+    // each with its own soft shade below it and falling off to the right, away from the marquee lamp
+    for (const [ry, rr, k] of [[RAIL_B, 2.3, .72], [RAIL_F, 3, .95]]) {
+      const sh = g.createLinearGradient(0, ry, 0, ry + rr + 8);
+      sh.addColorStop(0, 'rgba(0,0,0,.55)'); sh.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = sh; g.fillRect(0, ry, W, rr + 8);
+      g.fillStyle = barGrad(g, 0, ry - rr, 0, ry + rr, Math.PI / 2, CHROME, k); g.fillRect(0, ry - rr, W, 2 * rr);
+      const fo = g.createLinearGradient(0, 0, W, 0);
+      fo.addColorStop(0, 'rgba(0,0,0,0)'); fo.addColorStop(.5, 'rgba(0,0,0,.12)'); fo.addColorStop(1, 'rgba(0,0,0,.42)');
+      g.fillStyle = fo; g.fillRect(0, ry - rr, W, 2 * rr);
+    }
   }
   // the chute front: a lithographed tin plate with a rolled chrome top edge
   function paintFront(g) {
@@ -761,14 +764,21 @@ window.Machine = function (canvas, hooks) {
   }
   function clawShape(g, lw) {
     const { hx, hy, phi, a } = pose();
-    g.lineCap = 'round'; g.lineWidth = lw;
+    g.lineCap = 'round'; g.lineJoin = 'round'; g.lineWidth = lw;
     g.beginPath(); g.moveTo(c.x, CARR_Y + 6); g.lineTo(hx, hy); g.stroke();
+    g.fillRect(c.x - TR.hw, TR.y0 - 3, 2 * TR.hw, TR.y1 - TR.y0 + 3);              // the trolley and its shade
+    g.beginPath(); g.ellipse(c.x, SHADE.y1 - 1, SHADE.r1, 4, 0, 0, TAU); g.fill();
     g.save(); g.translate(hx, hy); g.rotate(phi);
-    g.fillRect(-21, -10, 42, 20);
+    g.beginPath(); g.ellipse(0, HUB.top, HUB.rTop, HUB.rTop * CE, 0, 0, TAU); g.fill();
+    g.fillRect(-HUB.rDrum, HUB.top, 2 * HUB.rDrum, HUB.fl - HUB.top);
+    g.beginPath(); g.ellipse(0, HUB.flB - 1, HUB.rFl, HUB.rFl * CE + 1.8, 0, 0, TAU); g.fill();
+    g.fillRect(-HUB.rBody, HUB.flB, 2 * HUB.rBody, HUB.nutB - HUB.flB);
     if (rider) { g.beginPath(); g.ellipse(0, -24, 13, 15, 0, 0, TAU); g.fill(); }
+    g.lineWidth = 6;
     for (const s of [-1, 1]) {
+      const F = FINGER[s];
       g.save(); g.translate(s * PIV, 8); g.rotate(-s * a);
-      g.lineWidth = 6; g.beginPath(); g.moveTo(0, 0); g.lineTo(s * 5, PL * .58); g.lineTo(0, PL); g.lineTo(-s * 12, PL - 1); g.stroke();
+      g.beginPath(); for (const p of F.up) g.lineTo(p.x, p.y); for (const p of F.lo) g.lineTo(p.x, p.y); g.stroke();
       g.restore();
     }
     g.restore();
@@ -811,63 +821,382 @@ window.Machine = function (canvas, hooks) {
     if (k.shift != null) o.labelShift = k.shift; else o.spin = k.spin;
     drawCan(g, k, b.position.x, b.position.y, b.angle + wob, k.w, k.h, o);
   }
-  // pivot pin: a turned steel head sitting in its own little seat shadow
-  function pin(g, x, y, r) {
-    g.fillStyle = 'rgba(0,0,0,.4)'; g.beginPath(); g.arc(x + .5, y + .7, r + .4, 0, TAU); g.fill();
-    const gr = g.createRadialGradient(x - r * .4, y - r * .45, r * .1, x, y, r);
-    gr.addColorStop(0, '#ffffff'); gr.addColorStop(.4, '#b3bac0'); gr.addColorStop(1, '#40464c');
-    g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill();
+  // ---------- drawing: the claw assembly ----------
+  // Modelled the way the roulette's turret is: the one lamp (ART.LIGHT) on every part, round parts seen a
+  // little from above (a top face is an ellipse CE of its width deep, as on the cans), polished chrome that
+  // mirrors the room (a hard lamp stripe on the side toward the lamp, a dark band where it sees the unlit box,
+  // a warm bounce from the pile on edges that face down), soft contact shadows, and no outlines.
+  const CE = .24;
+  const LAMPK = [1, .914, .769], ROOMK = [.52, .56, .66];
+  const bell = (d, w) => Math.exp(-(d * d) / (w * w));
+  const rgbs = (c, k = 1, up = 0) => `rgb(${Math.min(255, c[0] * k + up) | 0},${Math.min(255, c[1] * k + up) | 0},${Math.min(255, c[2] * k + up) | 0})`;
+  const HV = (() => { const v = [LV.x, LV.y - CE, LV.z + Math.sqrt(1 - CE * CE)], n = Math.hypot(v[0], v[1], v[2]); return v.map(q => q / n); })();
+  // a lit face with normal n (x right, y down, z toward the viewer); m = [ambient, diffuse, specular, its power]
+  function litFace(alb, n, m) {
+    const d = Math.max(0, n[0] * LV.x + n[1] * LV.y + n[2] * LV.z), h = Math.max(0, n[0] * HV[0] + n[1] * HV[1] + n[2] * HV[2]);
+    const s = m[2] * Math.pow(h, m[3]);
+    return [0, 1, 2].map(i => Math.min(255, alb[i] * (m[0] * ROOMK[i] + m[1] * d * LAMPK[i]) + 255 * s * LAMPK[i]));
+  }
+  const CHROME = { id: 0, chrome: true }, RUBBER = { id: 1, alb: [132, 40, 32], m: [.3, .74, .12, 16] };
+  const ENAMEL = [170, 38, 30], M_ENAMEL = [.36, .8, .5, 70];
+  const qa = an => ((Math.round(an / TAU * 256) % 256) + 256) % 256;
+  // colour across a round bar whose width runs along world angle q/256 turn, as [offset 0..1, [r, g, b]].
+  // Chrome: v = sin(half the angle the reflection turns through), so the middle mirrors the glass and the room
+  // in front, the edges the dark box behind; the lamp is a hard stripe in a soft bloom.
+  const PROFS = new Map();
+  function barProfile(q, mat) {
+    const key = mat.id * 256 + q;
+    let p = PROFS.get(key); if (p) return p;
+    const a = q / 256 * TAU, px = Math.cos(a), py = Math.sin(a);
+    const lp = LV.x * px + LV.y * py, fl = Math.atan2(lp, LV.z), sl = lp >= 0 ? 1 : -1;
+    const hs = 1 - .5 * Math.abs(LV.y * px - LV.x * py), vh = Math.sin(fl / 2);
+    const V = [-1, -.96, -.86, -.7, -.45, -.2, .1, .4, .66, .84, .95, 1];
+    for (const d of [-.16, -.07, 0, .07, .16]) if (Math.abs(vh + d) < .985) V.push(vh + d);
+    V.sort((x, y) => x - y);
+    p = V.map(v => {
+      const ph = 2 * Math.asin(clamp(v, -1, 1));
+      let col;
+      if (mat.chrome) {
+        const cf = Math.max(0, Math.cos(ph)), side = Math.max(0, Math.sin(ph) * sl);
+        const env = 24 + 124 * Math.pow(cf, 1.3) + 74 * side * (.55 + .45 * cf);
+        const sp = hs * (1.25 * bell(ph - fl, .17) + .32 * bell(ph - fl, .7));
+        const warm = Math.max(0, Math.sin(ph) * py);
+        col = [env + 34 * warm + 255 * sp * LAMPK[0], env + 14 * warm + 255 * sp * LAMPK[1], env * 1.05 - 4 * warm + 255 * sp * LAMPK[2]];
+      } else col = litFace(mat.alb, [v * px, v * py, Math.sqrt(Math.max(0, 1 - v * v))], mat.m).map(x => x * (.55 + .45 * Math.sqrt(Math.max(0, 1 - v * v))));
+      return [(v + 1) / 2, col.map(x => Math.max(0, Math.min(255, x)))];
+    });
+    PROFS.set(key, p); return p;
+  }
+  // Gradients are kept per context. A canvas gradient lives in the user space of the fill, not of its making,
+  // so one made from -1 to 1 serves every bar, band and slice, filled under a transform that sizes it.
+  const GC = new WeakMap();
+  function gcache(g, key, make) {
+    let m = GC.get(g); if (!m) GC.set(g, m = new Map());
+    let v = m.get(key); if (v) return v;
+    if (m.size > 1600) m.clear();
+    v = make(); m.set(key, v); return v;
+  }
+  // that profile across (x0,y0)-(x1,y1) in the current frame; `an` = the same direction in the world (the
+  // frame's rotation added in); k darkens (a part in shade), up lifts (a surface that faces the sky)
+  function barGrad(g, x0, y0, x1, y1, an, mat = CHROME, k = 1, up = 0) {
+    const gr = g.createLinearGradient(x0, y0, x1, y1);
+    for (const [o, col] of barProfile(qa(an), mat)) gr.addColorStop(o, rgbs(col, k, up));
+    return gr;
+  }
+  function unitGrad(g, an, mat = CHROME, k = 1, up = 0) {
+    const q = qa(an), kq = Math.round(k * 40), uq = Math.round(up);
+    return gcache(g, `u${mat.id}|${q}|${kq}|${uq}`, () => barGrad(g, -1, 0, 1, 0, q / 256 * TAU, mat, kq / 40, uq));
+  }
+  // fill the current path as a bar r either side of x = cx, across the frame's x axis
+  function fillBar(g, cx, r, an, mat = CHROME, k = 1, up = 0) {
+    g.save(); g.translate(cx, 0); g.scale(r, 1); g.fillStyle = unitGrad(g, an, mat, k, up); g.fill(); g.restore();
+  }
+  // the front half of a turned band between (y0, r0) above and (y1, r1) below
+  function turnBand(g, y0, r0, y1, r1) {
+    g.beginPath(); g.ellipse(0, y0, r0, r0 * CE, 0, Math.PI, 0, true); g.lineTo(r1, y1); g.ellipse(0, y1, r1, r1 * CE, 0, 0, Math.PI, false); g.closePath();
+  }
+  // lathe marks, the same on every turned face: [radius fraction, width, colour]
+  const LATHE = (() => {
+    let s = 911; const r = () => (s = (s * 16807) % 2147483647) / 2147483647, out = [];
+    for (let f = .14; f < .985; f += .028 + r() * .05) out.push([f, .22 + r() * .32, r() < .55 ? `rgba(255,250,240,${(.06 + r() * .1).toFixed(3)})` : `rgba(8,10,14,${(.06 + r() * .08).toFixed(3)})`]);
+    return out;
+  })();
+  // the radial bow the lamp makes across lathe marks (as on the roulette's spun apron)
+  const AH = Math.atan2(HV[2], HV[0]);
+  function bowGrad(g) {
+    return gcache(g, 'bow', () => {
+      const lobe = a => Math.pow(Math.max(0, Math.cos(a - AH)), 10) + Math.pow(Math.max(0, Math.cos(a - AH - Math.PI)), 10) * .7;
+      let b;
+      if (g.createConicGradient) {
+        b = g.createConicGradient(0, 0, 0);
+        for (let i = 0; i <= 48; i++) b.addColorStop(i / 48, `rgba(255,248,234,${(.42 * lobe(i / 48 * TAU)).toFixed(3)})`);
+      } else {
+        b = g.createLinearGradient(-20 * Math.cos(AH), -20 * Math.sin(AH), 20 * Math.cos(AH), 20 * Math.sin(AH));
+        b.addColorStop(0, 'rgba(255,248,234,.12)'); b.addColorStop(.5, 'rgba(255,248,234,0)'); b.addColorStop(1, 'rgba(255,248,234,.2)');
+      }
+      return b;
+    });
+  }
+  // a turned face that looks up (radius ro) at height y: lit from overhead, brighter on the lamp's side, the
+  // bow across it, then the lathe marks
+  const TOP = litFace([184, 188, 194], [0, -1, 0], [.4, .78, 0, 1]);
+  function turnedFace(g, y, ro, k = 1) {
+    g.save(); g.translate(0, y); g.scale(ro, ro * CE);
+    g.beginPath(); g.arc(0, 0, 1, 0, TAU);
+    g.fillStyle = gcache(g, 'tf' + k, () => {
+      const lg = g.createLinearGradient(-.8, .6, .8, -.6);
+      lg.addColorStop(0, rgbs(TOP, 1.08 * k, 8)); lg.addColorStop(.55, rgbs(TOP, .86 * k)); lg.addColorStop(1, rgbs(TOP, .6 * k));
+      return lg;
+    });
+    g.fill();
+    g.save(); g.clip();
+    g.globalAlpha = k; g.fillStyle = bowGrad(g); g.fillRect(-1, -1, 2, 2); g.globalAlpha = 1;
+    g.restore();
+    g.restore();
+    // lathe marks: drawn unscaled so the lines keep their weight
+    g.save(); g.translate(0, y); g.scale(1, CE);
+    for (const [f, w, col] of LATHE) { g.lineWidth = w; g.strokeStyle = col; g.beginPath(); g.arc(0, 0, ro * f, 0, TAU); g.stroke(); }
+    g.restore();
+  }
+
+  // One finger for the right-hand prong, in the prong's own frame (pivot at 0,0, the prong runs down +y,
+  // +x = outward); the left one is its mirror image. Two links: the upper bows out a little to a knuckle,
+  // the lower curls in to a rubber tip. Samples carry position, unit tangent and half width.
+  const FINGER = (() => {
+    const bez = (P, n, w0, w1) => {
+      const out = [];
+      for (let i = 0; i <= n; i++) {
+        const t = i / n, u = 1 - t;
+        const x = u * u * u * P[0] + 3 * u * u * t * P[2] + 3 * u * t * t * P[4] + t * t * t * P[6];
+        const y = u * u * u * P[1] + 3 * u * u * t * P[3] + 3 * u * t * t * P[5] + t * t * t * P[7];
+        const dx = 3 * u * u * (P[2] - P[0]) + 6 * u * t * (P[4] - P[2]) + 3 * t * t * (P[6] - P[4]);
+        const dy = 3 * u * u * (P[3] - P[1]) + 6 * u * t * (P[5] - P[3]) + 3 * t * t * (P[7] - P[5]);
+        const l = Math.hypot(dx, dy) || 1;
+        out.push({ x, y, tx: dx / l, ty: dy / l, w: w0 + (w1 - w0) * t });
+      }
+      return out;
+    };
+    const up = bez([0, -1.5, 1.5, 9, 3.5, 18, 3.5, 29], 8, 3.2, 2.75);
+    const lo = bez([3.5, 29, 3.5, 40.5, .4, 54.8, -8.4, 55.4], 12, 2.75, 2.05);
+    // the rubber boot over the last quarter, swelling a little toward the end
+    const tip = lo.slice(9).map((p, i, A) => ({ ...p, w: p.w + .45 * i / (A.length - 1) }));
+    const mirror = P => P.map(p => ({ x: -p.x, y: p.y, tx: -p.tx, ty: p.ty, w: p.w }));
+    const knuckle = { x: 3.5, y: 29 };
+    return { 1: { up, lo, tip, k: knuckle }, [-1]: { up: mirror(up), lo: mirror(lo), tip: mirror(tip), k: { x: -3.5, y: 29 } } };
+  })();
+  // a tapered round bar along samples P in the current frame, whose +x points along world angle wa:
+  // clipped to its outline (round ends), shaded in short slices across its own width, so the lamp's
+  // stripe follows the bend (a sample's own k, if it has one, shades it further)
+  function tube(g, P, wa, mat = CHROME, k = 1, grow = 0) {
+    const n = P.length - 1, b = P[0], e = P[n], ab = Math.atan2(b.tx, -b.ty), ae = Math.atan2(e.tx, -e.ty);
+    g.save();
+    g.beginPath();
+    for (let i = 0; i <= n; i++) { const p = P[i], w = p.w + grow; g.lineTo(p.x - p.ty * w, p.y + p.tx * w); }
+    g.arc(e.x, e.y, e.w + grow, ae, ae - Math.PI, true);
+    for (let i = n; i >= 0; i--) { const p = P[i], w = p.w + grow; g.lineTo(p.x + p.ty * w, p.y - p.tx * w); }
+    g.arc(b.x, b.y, b.w + grow, ab + Math.PI, ab, true);
+    g.closePath(); g.clip();
+    for (let i = 0; i < n; i++) {
+      const p = P[i], q = P[i + 1], l = Math.hypot(q.x - p.x, q.y - p.y) || 1, ux = (q.x - p.x) / l, uy = (q.y - p.y) / l;
+      const nx = -uy, ny = ux, w = (p.w + q.w) / 2 + grow;
+      const e0 = i === 0 ? w + 1 : .45, e1 = i === n - 1 ? w + 1 : .45, kk = p.k == null ? k : k * (p.k + q.k) / 2;
+      g.save(); g.transform(nx * w, ny * w, ux, uy, (p.x + q.x) / 2, (p.y + q.y) / 2);   // x across (1 = the edge), y along
+      g.beginPath(); g.rect(-1.7, -l / 2 - e0, 3.4, l + e0 + e1);
+      g.fillStyle = unitGrad(g, Math.atan2(ny, nx) + wa, mat, kk); g.fill();
+      g.restore();
+    }
+    g.restore();
+  }
+  // soft round shade: a blurred disc of darkness at (x, y), squashed by sy
+  function blot(g, x, y, r, a, sy = 1) {
+    g.save(); g.translate(x, y); g.scale(r, r * sy);
+    g.fillStyle = gcache(g, 'blot' + a, () => {
+      const gr = g.createRadialGradient(0, 0, 0, 0, 0, 1);
+      gr.addColorStop(0, `rgba(8,6,8,${a})`); gr.addColorStop(.55, `rgba(8,6,8,${(a * .45).toFixed(3)})`); gr.addColorStop(1, 'rgba(8,6,8,0)');
+      return gr;
+    });
+    g.beginPath(); g.arc(0, 0, 1, 0, TAU); g.fill(); g.restore();
+  }
+  // the lamp's direction in a frame turned by `an` (for radial highlights)
+  const lampIn = an => rot(L2.x, L2.y, -an);
+  // a turned pin boss: a lit disc with a hard rim on the lamp side, sat in its own shade, a domed pin head
+  function boss(g, x, y, r, an) {
+    const l = lampIn(an), q = qa(an);
+    blot(g, x - l.x * 1.1, y - l.y * 1.1, r * 1.55, .5);
+    g.save(); g.translate(x, y); g.scale(r, r);
+    g.fillStyle = gcache(g, 'boss' + q, () => {
+      const L = lampIn(q / 256 * TAU), gr = g.createRadialGradient(L.x * .45, L.y * .45, .08, 0, 0, 1);
+      gr.addColorStop(0, '#fbfaf5'); gr.addColorStop(.3, '#c3c8cc'); gr.addColorStop(.75, '#5d646b'); gr.addColorStop(1, '#2b2f34');
+      return gr;
+    });
+    g.beginPath(); g.arc(0, 0, 1, 0, TAU); g.fill();
+    g.restore();
+    const la = Math.atan2(l.y, l.x);
+    g.lineWidth = r * .14; g.strokeStyle = 'rgba(255,248,232,.55)'; g.beginPath(); g.arc(x, y, r * .9, la - .8, la + .8); g.stroke();
+    if (ART.rivet) ART.rivet(g, x, y, r * .42);
+  }
+  function finger(g, s, wa) {
+    const F = FINGER[s];
+    tube(g, F.lo, wa, CHROME, .96);
+    tube(g, F.tip, wa, RUBBER, 1, .6);
+    // the rubber boot's lip, where it grips the steel
+    const t0 = F.tip[0];
+    g.lineWidth = .55; g.strokeStyle = 'rgba(20,6,6,.55)';
+    g.beginPath(); g.moveTo(t0.x - t0.ty * (t0.w + .6), t0.y + t0.tx * (t0.w + .6)); g.lineTo(t0.x + t0.ty * (t0.w + .6), t0.y - t0.tx * (t0.w + .6)); g.stroke();
+    // the upper link overlaps the lower at the knuckle, in its own shade
+    blot(g, F.k.x + 1, F.k.y + 2.4, 5.2, .45, 1.2);
+    tube(g, F.up, wa, CHROME, 1);
+    boss(g, F.k.x, F.k.y, 3.4, wa);
+  }
+  // the fork on the flange that holds a finger's pivot
+  function lug(g, s, an) {
+    const x = s * PIV, r = 3.9, l = lampIn(an);
+    g.beginPath(); g.moveTo(x - r, -1); g.lineTo(x + r, -1); g.lineTo(x + r, 8); g.arc(x, 8, r, 0, Math.PI); g.closePath();
+    fillBar(g, x, r, an, CHROME, .9);
+    const sd = l.x < 0 ? -1 : 1;
+    g.lineWidth = .7; g.strokeStyle = 'rgba(255,248,232,.6)'; g.beginPath(); g.moveTo(x + sd * (r - .35), -1); g.lineTo(x + sd * (r - .35), 8); g.stroke();
+    g.strokeStyle = 'rgba(0,0,0,.4)'; g.beginPath(); g.arc(x, 8, r - .35, Math.PI * .1, Math.PI * .9); g.stroke();
+    if (ART.rivet) ART.rivet(g, x, 8, 1.8);
+  }
+  // the hub, a turned chrome head: the rider's disc on top, a drum, a flange that carries the finger lugs,
+  // and under it a short body, a cone and a nut that come down on a can. y down, at the hub's centre.
+  const HUB = { top: -10, rTop: 16.2, cham: -8.7, rDrum: 17.8, fl: -2.2, rFl: 21, flB: 1.4, rBody: 12.4, cone: 6.6, rCone: 7.2, nut: 9.2, rNut: 4.6, nutB: 10.6, boss: -12.8, rBoss: 3.5 };
+  function hubBelow(g, an) {
+    const U = HUB;
+    turnBand(g, U.nut, U.rNut, U.nutB, U.rNut * .92); fillBar(g, 0, U.rNut, an, CHROME, .78);
+    turnBand(g, U.cone, U.rBody, U.nut, U.rCone); fillBar(g, 0, U.rBody, an, CHROME, .62);
+    turnBand(g, U.flB - 1, U.rBody, U.cone, U.rBody); fillBar(g, 0, U.rBody, an, CHROME, .8);
+    // the flange throws its shade down the body
+    g.save(); g.clip();
+    g.fillStyle = gcache(g, 'flsh', () => {
+      const fs = g.createLinearGradient(0, U.flB + 3, 0, U.flB + 7.5);
+      fs.addColorStop(0, 'rgba(8,6,8,.7)'); fs.addColorStop(1, 'rgba(8,6,8,0)');
+      return fs;
+    });
+    g.fillRect(-U.rBody, U.flB - 2, 2 * U.rBody, 12);
+    g.restore();
+  }
+  function hubAbove(g, an) {
+    const U = HUB;
+    // flange: its rim, then its top face
+    turnBand(g, U.fl, U.rFl, U.flB, U.rFl); fillBar(g, 0, U.rFl, an, CHROME, .95);
+    g.lineWidth = .6; g.strokeStyle = 'rgba(0,0,0,.45)';
+    g.beginPath(); g.ellipse(0, U.flB, U.rFl - .2, (U.rFl - .2) * CE, 0, .06, Math.PI - .06); g.stroke();
+    turnedFace(g, U.fl, U.rFl, .96);
+    g.lineWidth = .7; g.strokeStyle = 'rgba(255,250,238,.55)';
+    g.beginPath(); g.ellipse(0, U.fl, U.rFl - .35, (U.rFl - .35) * CE, 0, Math.PI * .55, Math.PI * 1.35); g.stroke();
+    // the drum stands on it: a dark ring where they meet
+    g.save(); g.translate(0, U.fl); g.scale(1, CE);
+    g.fillStyle = gcache(g, 'drumao', () => {
+      const ao = g.createRadialGradient(0, 0, U.rDrum - .5, 0, 0, U.rDrum + 2.6);
+      ao.addColorStop(0, 'rgba(6,5,8,.62)'); ao.addColorStop(1, 'rgba(6,5,8,0)');
+      return ao;
+    });
+    g.beginPath(); g.arc(0, 0, U.rDrum + 2.6, 0, TAU); g.fill();
+    g.restore();
+    turnBand(g, U.cham, U.rDrum, U.fl, U.rDrum); fillBar(g, 0, U.rDrum, an, CHROME, 1);
+    // a turned groove round the drum
+    for (const [dy, col, w] of [[0, 'rgba(6,6,10,.55)', .8], [.75, 'rgba(255,250,240,.28)', .5]]) {
+      g.lineWidth = w; g.strokeStyle = col; g.beginPath(); g.ellipse(0, -5.4 + dy, U.rDrum - .1, (U.rDrum - .1) * CE, 0, .04, Math.PI - .04); g.stroke();
+    }
+    // chamfer: the drum's top edge, turned toward the sky
+    turnBand(g, U.top, U.rTop, U.cham, U.rDrum); fillBar(g, 0, U.rDrum, an, CHROME, 1.05, 34);
+    turnedFace(g, U.top, U.rTop, 1);
+    g.lineWidth = .6; g.strokeStyle = 'rgba(255,250,238,.5)';
+    g.beginPath(); g.ellipse(0, U.top, U.rTop - .3, (U.rTop - .3) * CE, 0, Math.PI * .6, Math.PI * 1.3); g.stroke();
+    // the cable swivel boss in the middle of the top face
+    blot(g, 1.2, U.top + .9, U.rBoss * 1.9, .5, CE * 1.4);
+    turnBand(g, U.boss, U.rBoss, U.top, U.rBoss); fillBar(g, 0, U.rBoss, an, CHROME, .95);
+    g.beginPath(); g.ellipse(0, U.boss, U.rBoss, U.rBoss * CE, 0, 0, TAU); g.fillStyle = rgbs(TOP, 1.05); g.fill();
+    g.beginPath(); g.ellipse(0, U.boss, 1.6, 1.6 * CE, 0, 0, TAU); g.fillStyle = 'rgba(10,10,14,.7)'; g.fill();
+  }
+  const RAIL_F = CARR_Y - 6, RAIL_B = CARR_Y - 14.6;
+  // the cable: a wire rope, its strands laid in a helix; the lay is fixed at the hub end, so it pays out with it
+  function drawCable(g, top, bot) {
+    const dx = top.x - bot.x, dy = top.y - bot.y, len = Math.hypot(dx, dy);
+    if (len < 1) return;
+    const th = Math.atan2(-dx, dy), hw = 1.4, P = 2.3;
+    g.save(); g.translate(bot.x, bot.y); g.rotate(th);
+    g.beginPath(); g.rect(-hw, -.5, 2 * hw, len + .5);
+    fillBar(g, 0, hw, th, CHROME, .4);
+    g.clip();
+    const q = qa(th);
+    g.lineCap = 'round'; g.lineWidth = P * .5; g.strokeStyle = gcache(g, 'cable' + q, () => barGrad(g, -hw, 0, hw, 0, q / 256 * TAU, CHROME, .92));
+    g.beginPath();
+    for (let y = -P; y < len + P; y += P) { g.moveTo(-hw * 1.15, y - P * .45); g.lineTo(hw * 1.15, y + P * .45); }
+    g.stroke();
+    g.restore();
   }
   function drawClaw(g) {
     const { hx, hy, phi, a } = pose();
-    const top = { x: c.x + jigX(), y: CARR_Y + 6 }, bot = { x: hx + 12 * Math.sin(phi), y: hy - 12 * Math.cos(phi) };
-    // cable: two braided strands; the lay of the braid runs with the cable as it pays out
-    g.lineCap = 'butt'; g.strokeStyle = '#2d3136'; g.lineWidth = 2.6;
-    g.beginPath(); g.moveTo(top.x, top.y); g.lineTo(bot.x, bot.y); g.stroke();
-    if (g.setLineDash) {
-      g.lineWidth = .9; g.setLineDash([1.6, 1.6]);
-      g.strokeStyle = '#9da4aa'; g.lineDashOffset = -c.L; g.beginPath(); g.moveTo(top.x - .55, top.y); g.lineTo(bot.x - .55, bot.y); g.stroke();
-      g.strokeStyle = '#5f666d'; g.lineDashOffset = -c.L + 1.6; g.beginPath(); g.moveTo(top.x + .55, top.y); g.lineTo(bot.x + .55, bot.y); g.stroke();
-      g.setLineDash([]);
-    }
-    // prongs: tapered polished steel, lit from the lamp at the prong's own angle; rubber pads at the tips
-    for (const s of [-1, 1]) {
-      const wa = phi - s * a, l = rot(L2.x, L2.y, -wa);
-      g.save(); g.translate(hx, hy); g.rotate(phi); g.translate(s * PIV, 8); g.rotate(-s * a);
-      const P = [[0, -2], [s * 5, PL * .58], [0, PL - 3]], hw = [3.7, 3, 2.3];
-      const N = P.map((p, i) => {
-        const q0 = P[Math.max(0, i - 1)], q1 = P[Math.min(2, i + 1)], dx = q1[0] - q0[0], dy = q1[1] - q0[1], n = Math.hypot(dx, dy);
-        return [-dy / n, dx / n];
-      });
-      g.beginPath();
-      P.forEach((p, i) => (i ? g.lineTo : g.moveTo).call(g, p[0] + N[i][0] * hw[i], p[1] + N[i][1] * hw[i]));
-      for (let i = 2; i >= 0; i--) g.lineTo(P[i][0] - N[i][0] * hw[i], P[i][1] - N[i][1] * hw[i]);
-      g.closePath(); g.fillStyle = steel(g, -5, 0, 5, 0, l.x, l.y); g.fill();
-      // specular on the lamp-facing edge
-      const sd = l.x < 0 ? 1 : -1;
-      g.strokeStyle = 'rgba(255,255,255,.7)'; g.lineWidth = .75; g.beginPath();
-      P.forEach((p, i) => (i ? g.lineTo : g.moveTo).call(g, p[0] + N[i][0] * hw[i] * sd * .8, p[1] + N[i][1] * hw[i] * sd * .8));
-      g.stroke();
-      // the hooked foot
-      g.beginPath(); g.moveTo(1.8 * s, PL - 5.5); g.lineTo(-s * 11, PL - 3.5); g.lineTo(-s * 11, PL + 1.2); g.lineTo(1.8 * s, PL + 1.5); g.closePath();
-      g.fillStyle = steel(g, 0, PL + 1.5, 0, PL - 5.5, l.x, l.y); g.fill();
-      const pad = g.createRadialGradient(-s * 11 - .8, PL - 2.8, .3, -s * 11, PL - 1.2, 3.6);
-      pad.addColorStop(0, '#9a2b21'); pad.addColorStop(1, '#3b0d0a');
-      g.fillStyle = pad; g.beginPath(); g.arc(-s * 11, PL - 1.2, 3.3, 0, TAU); g.fill();
-      g.restore();
-    }
-    // hub: a turned steel housing with a split line and the two pivot pins
+    const top = { x: c.x + jigX(), y: CARR_Y + 6 }, b = rot(0, HUB.boss + .6, phi);
+    drawCable(g, top, { x: hx + b.x, y: hy + b.y });
     g.save(); g.translate(hx, hy); g.rotate(phi);
-    const l = rot(L2.x, L2.y, -phi);
-    g.fillStyle = steel(g, 0, 10, 0, -10, l.x, l.y); rrect(g, -5, -15, 10, 6, 1.5); g.fill();
-    rrect(g, -21, -10, 42, 20, 5); g.fillStyle = steel(g, 0, 10, 0, -10, l.x, l.y); g.fill();
-    const hs = g.createLinearGradient(-21, 0, 21, 0);
-    hs.addColorStop(0, `rgba(255,255,255,${l.x < 0 ? .16 : 0})`); hs.addColorStop(.5, 'rgba(0,0,0,0)'); hs.addColorStop(1, `rgba(0,0,0,${l.x < 0 ? .3 : .1})`);
-    g.fillStyle = hs; rrect(g, -21, -10, 42, 20, 5); g.fill();
-    g.fillStyle = 'rgba(0,0,0,.4)'; g.fillRect(-20, 1, 40, 1);
-    g.fillStyle = 'rgba(255,255,255,.28)'; g.fillRect(-20, 2, 40, .75);
-    g.fillStyle = 'rgba(255,255,255,.65)'; g.fillRect(-16, -9.6, 32, .75);
-    pin(g, -PIV, 8, 3); pin(g, PIV, 8, 3);
+    hubBelow(g, phi);
+    for (const s of [-1, 1]) {
+      g.save(); g.translate(s * PIV, 8); g.rotate(-s * a);
+      finger(g, s, phi - s * a);
+      g.restore();
+      lug(g, s, phi);
+    }
+    hubAbove(g, phi);
+    g.restore();
+  }
+  // the third finger hangs from the back of the hub (a little round to the right) and swings away from us
+  // as the claw opens, so it shows nearly end on, foreshortened, between the other two. Its inner face turns
+  // from the lamp as it curls, which is what shows the curl. Drawn before the cans, which stand in front of it.
+  const BACK = .45;
+  function drawClawBack(g) {
+    const { hx, hy, phi, a } = pose(), sa = Math.sin(a), ca = Math.cos(a), sb = Math.sin(BACK), cb = Math.cos(BACK), F = FINGER[1];
+    const dX = [ca * sb, -sa, -ca * cb], dY = [sa * sb, ca, -sa * cb], O = [15 * sb, 8, -15 * cb];
+    const map = (P, w = .9) => {
+      const out = P.map(p => {
+        const x = O[0] + p.x * dX[0] + p.y * dY[0], y = O[1] + p.x * dX[1] + p.y * dY[1], z = O[2] + p.x * dX[2] + p.y * dY[2];
+        const N = [-p.ty * dX[0] + p.tx * dY[0], -p.ty * dX[1] + p.tx * dY[1], -p.ty * dX[2] + p.tx * dY[2]];
+        return { x, y: y + z * CE, w: p.w * w, k: .34 + .62 * Math.max(0, N[0] * LV.x + N[1] * LV.y + N[2] * LV.z) };
+      });
+      for (let i = 0; i < out.length; i++) {
+        const A = out[Math.max(0, i - 1)], B = out[Math.min(out.length - 1, i + 1)], l = Math.hypot(B.x - A.x, B.y - A.y) || 1;
+        out[i].tx = (B.x - A.x) / l; out[i].ty = (B.y - A.y) / l;
+      }
+      return out;
+    };
+    g.save(); g.translate(hx, hy); g.rotate(phi);
+    const lo = map(F.lo), tip = map(F.tip), up = map(F.up);
+    tube(g, lo, phi, CHROME, .85);
+    tube(g, tip, phi, RUBBER, .9, .55);
+    tube(g, up, phi, CHROME, .85);
+    // the knuckle pin, seen from its side
+    const K = up[up.length - 1], ka = Math.atan2(K.ty, K.tx) - Math.PI / 2;
+    g.save(); g.translate(K.x, K.y); g.rotate(ka);
+    rrect(g, -K.w - .6, -1.3, 2 * K.w + 1.2, 2.6, 1.2);
+    g.rotate(Math.PI / 2); g.scale(1.3, 1); g.fillStyle = unitGrad(g, ka + phi + Math.PI / 2, CHROME, .42); g.fill();
+    g.restore();
+    // the pad at the end of the curl looks straight at us
+    const e = tip[tip.length - 1], l = lampIn(phi), r = e.w + .8;
+    const pg = g.createRadialGradient(e.x + l.x * r * .4, e.y + l.y * r * .4, r * .1, e.x, e.y, r);
+    pg.addColorStop(0, rgbs(litFace(RUBBER.alb, [0, 0, 1], RUBBER.m), .8, 6)); pg.addColorStop(1, rgbs(RUBBER.alb, .2));
+    g.fillStyle = pg; g.beginPath(); g.ellipse(e.x, e.y + .4, r, r * .8, 0, 0, TAU); g.fill();
+    g.restore();
+  }
+  // the claw's own shade on the cans it works: fingers and flange, thrown a little down and right, and only
+  // where a can is there to catch it (the far, soft shadow on the back wall is drawShadows')
+  function drawClawShade(g) {
+    const { hx, hy, phi, a } = pose(), tipY = hy + 8 + PL * Math.cos(a), near = [];
+    let top = 1e9;
+    for (const k of cans) {
+      if (k.gone || k.leaving || k.out) continue;
+      const p = k.body.position, e = extent(k, 0);
+      if (Math.abs(p.x - hx) > e.x + 46 || p.y + e.y < hy - 6 || p.y - e.y > tipY + 20) continue;
+      near.push(k);
+      if (Math.abs(p.x - hx) < e.x + 14) top = Math.min(top, p.y - e.y);
+    }
+    if (!near.length) return;
+    const gap = c.held ? 0 : clamp(top - (hy + HUB.nutB), 0, 90), al = 1 - gap / 90;
+    if (al < .04) return;
+    const off = 1.4 + gap * .3, sf = 1 + gap * .05;
+    g.save();
+    g.beginPath();
+    for (const k of near) {
+      const b = k.body, cs = Math.cos(b.angle), sn = Math.sin(b.angle), hw = k.w / 2 + .4, hh = k.h / 2 + k.w * .1;
+      const P = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([u, v]) => [b.position.x + u * cs - v * sn, b.position.y + u * sn + v * cs]);
+      g.moveTo(P[0][0], P[0][1]); g.lineTo(P[1][0], P[1][1]); g.lineTo(P[2][0], P[2][1]); g.lineTo(P[3][0], P[3][1]); g.closePath();
+    }
+    g.clip();
+    g.translate(hx + .45 * off, hy + .9 * off); g.rotate(phi);
+    g.lineCap = 'round'; g.lineJoin = 'round';
+    for (const [grow, k] of [[5 * sf, .06], [2.4 * sf, .09], [0, .13]]) {
+      const col = `rgba(10,6,8,${(k * al).toFixed(3)})`;
+      g.strokeStyle = col; g.fillStyle = col; g.lineWidth = 5.4 + grow;
+      for (const s of [-1, 1]) {
+        const F = FINGER[s];
+        g.save(); g.translate(s * PIV, 8); g.rotate(-s * a);
+        g.beginPath(); for (const p of F.up) g.lineTo(p.x, p.y); for (const p of F.lo) g.lineTo(p.x, p.y); g.stroke();
+        g.restore();
+      }
+      g.beginPath(); g.ellipse(0, HUB.flB, HUB.rFl + grow / 2, HUB.rFl * CE + 1.5 + grow / 2, 0, 0, TAU); g.fill();
+      g.beginPath(); g.ellipse(0, HUB.nut, HUB.rBody + grow / 2, 4 + grow / 2, 0, 0, TAU); g.fill();
+    }
     g.restore();
   }
   function riderPose() {
@@ -888,48 +1217,117 @@ window.Machine = function (canvas, hooks) {
     const A = rider && window.ANIMALS && window.ANIMALS[rider.key];
     if (!A || typeof A.draw !== 'function') return;
     const { hx, hy, phi } = pose(), [emotion, look] = riderPose();
-    g.save(); g.translate(hx, hy); g.rotate(phi); g.translate(0, -10);
+    g.save(); g.translate(hx, hy); g.rotate(phi);
+    // it sits on the hub's turned top face: a soft contact shade under it, kept on the face
+    g.save(); g.beginPath(); g.ellipse(0, HUB.top, HUB.rTop, HUB.rTop * CE, 0, 0, TAU); g.clip();
+    blot(g, 1.6, HUB.top + .5, 15, .55, CE * 1.25);
+    g.restore();
+    g.translate(0, HUB.top);
     try { A.draw(g, { t: clock, mode: 'ride', emotion, look, bib: rider.bib || null, scale: .42 }); } catch (e) { rider.bad = (rider.bad || 0) + 1; if (rider.bad > 3) rider = null; }
     g.restore();
   }
   const jigX = () => (jig > 0 ? Math.sin(clock * 90) * 2.2 * (jig / .15) : 0);
+  // the trolley: a cast box in red enamel riding the two rods, seen a little from above (its top face shows)
+  // and in the room's perspective (the side toward the middle shows); bevelled edges catch the lamp, a raised
+  // plate and four bolts on the front, and a spun shade for the lamp under its nose
+  const TR = { hw: 26, y0: CARR_Y - 14, y1: CARR_Y + 5, d: 21, bev: 1.7 };
+  const SHADE = { y0: CARR_Y + 6.4, r0: 3.2, y1: CARR_Y + 10.8, r1: 8.2 };
   function drawCarriage(g) {
-    const x = c.x + jigX(), y = CARR_Y;
-    // wheels riding the rail; their spokes turn with the travel
-    for (const s of [-1, 1]) {
-      const wx = x + s * 17, wy = y - 17;
-      const wg = g.createRadialGradient(wx - 1.8, wy - 2, .5, wx, wy, 5.2);
-      wg.addColorStop(0, '#d9dee2'); wg.addColorStop(.6, '#6b737a'); wg.addColorStop(1, '#2a2e33');
-      g.fillStyle = wg; g.beginPath(); g.arc(wx, wy, 5, 0, TAU); g.fill();
-      g.strokeStyle = 'rgba(20,22,26,.8)'; g.lineWidth = .9; const r0 = c.x / 5;
-      for (let i = 0; i < 3; i++) { const an = r0 + i * TAU / 3; g.beginPath(); g.moveTo(wx, wy); g.lineTo(wx + Math.cos(an) * 4, wy + Math.sin(an) * 4); g.stroke(); }
+    const x = c.x + jigX(), { hw, y0, y1, d, bev } = TR;
+    const dx = clamp((VP.x - x) * .026, -5, 5), dy = -d * CE, sd = dx >= 0 ? 1 : -1;
+    const face = (n, k = 1, up = 0) => rgbs(litFace(ENAMEL, n, M_ENAMEL), k, up);
+    // where the rods run into the far side: a little contact shade on them
+    blot(g, x - sd * hw - sd * 1.5, RAIL_F, 5, .45, .8);
+    // the side toward the middle, with the rods going in
+    const xs = x + sd * hw;
+    quad(g, [xs, y0, xs + dx, y0 + dy, xs + dx, y1 + dy, xs, y1]);
+    g.fillStyle = gcache(g, 'tside' + sd, () => {
+      const gr = g.createLinearGradient(0, y0 + dy, 0, y1);
+      gr.addColorStop(0, face([sd * .7, -.7, .2])); gr.addColorStop(.3, face([sd, 0, 0])); gr.addColorStop(1, face([sd, .3, 0], .7));
+      return gr;
+    });
+    g.fill();
+    for (const [ry, rr, f] of [[RAIL_B, 2.3, .8], [RAIL_F, 3, .3]]) {
+      const hx0 = xs + dx * f;
+      g.beginPath(); g.ellipse(hx0, ry, Math.max(.5, Math.abs(dx) * .16), rr + .7, 0, 0, TAU); g.fillStyle = 'rgba(12,4,4,.7)'; g.fill();
+      g.fillStyle = gcache(g, 'thole' + ry, () => barGrad(g, 0, ry - rr, 0, ry + rr, Math.PI / 2, CHROME, .8));
+      g.beginPath(); g.ellipse(hx0 + sd * .4, ry, Math.max(.35, Math.abs(dx) * .1), rr, 0, 0, TAU); g.fill();
     }
-    // body: enamelled dark steel with a printed tomato stripe
-    rrect(g, x - 26, y - 14, 52, 20, 3);
-    const bg = g.createLinearGradient(0, y - 14, 0, y + 6);
-    bg.addColorStop(0, '#4a4f56'); bg.addColorStop(.3, '#2c3035'); bg.addColorStop(1, '#17191c');
-    g.fillStyle = bg; g.fill();
-    const bs = g.createLinearGradient(x - 26, 0, x + 26, 0);
-    bs.addColorStop(0, 'rgba(255,255,255,.1)'); bs.addColorStop(1, 'rgba(0,0,0,.3)');
-    g.fillStyle = bs; rrect(g, x - 26, y - 14, 52, 20, 3); g.fill();
-    g.fillStyle = TOMATO; g.fillRect(x - 26, y - 5, 52, 3);
-    g.fillStyle = 'rgba(0,0,0,.25)'; g.fillRect(x - 26, y - 2, 52, .8);
-    g.fillStyle = 'rgba(255,255,255,.45)'; g.fillRect(x - 23, y - 14, 46, .75);
-    // lamp socket
-    g.fillStyle = steel(g, x - 4, 0, x + 4, 0); g.fillRect(x - 4, y + 6, 8, 3.5);
+    // top face, lit from overhead, with the lamp's soft reflection in the enamel toward the front left
+    quad(g, [x - hw, y0, x + hw, y0, x + hw + dx, y0 + dy, x - hw + dx, y0 + dy]);
+    g.fillStyle = face([0, -1, 0]); g.fill();
+    g.save(); g.clip(); g.translate(x, 0);
+    g.fillStyle = gcache(g, 'ttop', () => {
+      const gr = g.createRadialGradient(-hw * .3, y0 - 1, 0, -hw * .3, y0 - 1, hw * .9);
+      gr.addColorStop(0, 'rgba(255,238,215,.34)'); gr.addColorStop(1, 'rgba(255,238,215,0)');
+      return gr;
+    });
+    g.fillRect(-hw - 6, y0 + dy - 2, 2 * hw + 12, -dy + 4);
+    g.fillStyle = 'rgba(40,6,4,.35)'; g.fillRect(-hw - 6, y0 + dy - 1, 2 * hw + 12, 1.4);
+    g.restore();
+    // front: a bevelled frame round a flat face
+    const X0 = x - hw, X1 = x + hw, I0 = X0 + bev, I1 = X1 - bev, J0 = y0 + bev, J1 = y1 - bev;
+    quad(g, [X0, y0, X1, y0, I1, J0, I0, J0]); g.fillStyle = face([0, -.72, .7], 1, 6); g.fill();
+    quad(g, [X0, y0, I0, J0, I0, J1, X0, y1]); g.fillStyle = face([-.72, 0, .7]); g.fill();
+    quad(g, [X1, y0, X1, y1, I1, J1, I1, J0]); g.fillStyle = face([.72, 0, .7], .9); g.fill();
+    quad(g, [I0, J1, I1, J1, X1, y1, X0, y1]); g.fillStyle = face([0, .72, .7], .8); g.fill();
+    g.fillStyle = gcache(g, 'tfront', () => {
+      const gr = g.createLinearGradient(0, J0, 0, J1);
+      gr.addColorStop(0, face([0, -.3, .95], 1.02)); gr.addColorStop(.4, face([0, 0, 1])); gr.addColorStop(1, face([0, .35, .94], .78));
+      return gr;
+    });
+    g.fillRect(I0, J0, I1 - I0, J1 - J0);
+    g.lineWidth = .6; g.strokeStyle = 'rgba(255,240,226,.7)';
+    g.beginPath(); g.moveTo(X0 + .5, y0 + .3); g.lineTo(X1 - .5, y0 + .3); g.stroke();
+    // the raised plate: lit on its top and left edges, in shade on the others
+    const p0 = X0 + 6, p1 = X1 - 6, q0 = y0 + 4.6, q1 = y1 - 4.6;
+    g.fillStyle = face([0, -.08, 1], 1.04); g.fillRect(p0, q0, p1 - p0, q1 - q0);
+    g.lineWidth = .8;
+    g.strokeStyle = 'rgba(255,226,210,.55)'; g.beginPath(); g.moveTo(p0, q1); g.lineTo(p0, q0); g.lineTo(p1, q0); g.stroke();
+    g.strokeStyle = 'rgba(30,4,4,.55)'; g.beginPath(); g.moveTo(p1, q0 + .4); g.lineTo(p1, q1); g.lineTo(p0 + .4, q1); g.stroke();
+    // motor vents cast into the plate: dark slots, the lamp on each lower lip
+    for (let i = -3; i <= 3; i++) {
+      const vx = x + i * 5, v0 = q0 + 2, v1 = q1 - 2;
+      rrect(g, vx - 1.15, v0, 2.3, v1 - v0, 1.15); g.fillStyle = 'rgba(22,3,3,.8)'; g.fill();
+      g.lineWidth = .45; g.strokeStyle = 'rgba(255,222,204,.45)';
+      g.beginPath(); g.moveTo(vx - .9, v1 + .35); g.lineTo(vx + .9, v1 + .35); g.stroke();
+    }
+    if (ART.rivet) for (const [bx, by] of [[X0 + 3.1, y0 + 3.1], [X1 - 3.1, y0 + 3.1], [X0 + 3.1, y1 - 3.1], [X1 - 3.1, y1 - 3.1]]) ART.rivet(g, bx, by, 1.25);
+    // the lamp shade: a short stem, then spun nickel flaring out to a rolled rim
+    const S0 = SHADE;
+    blot(g, x + 1.5, y1 + 1.4, 11, .45, .45);
+    g.save(); g.translate(x, 0);
+    turnBand(g, S0.y0, S0.r0, S0.y1, S0.r1); fillBar(g, 0, S0.r1, 0, CHROME, .9, 16);
+    g.save(); g.clip();
+    for (const [f, col] of [[.22, 'rgba(255,250,240,.2)'], [.4, 'rgba(10,10,14,.18)'], [.58, 'rgba(255,250,240,.16)'], [.78, 'rgba(10,10,14,.2)']]) {
+      const yy = S0.y0 + (S0.y1 - S0.y0) * f, rr = S0.r0 + (S0.r1 - S0.r0) * f;
+      g.lineWidth = .35; g.strokeStyle = col; g.beginPath(); g.ellipse(0, yy, rr, rr * CE, 0, .05, Math.PI - .05); g.stroke();
+    }
+    g.restore();
+    g.lineWidth = .9; g.strokeStyle = 'rgba(255,248,232,.6)';
+    g.beginPath(); g.ellipse(0, S0.y1 - .3, S0.r1 - .2, (S0.r1 - .2) * CE, 0, .12, Math.PI - .12); g.stroke();
+    turnBand(g, y1 - .6, 2.1, S0.y0, 2.1); fillBar(g, 0, 2.1, 0, CHROME, .85);
+    g.restore();
   }
   function drawBulb(g) {
-    const x = c.x + jigX(), y = CARR_Y + 13.5, on = clamp(lamp, 0, 1.4);
+    const x = c.x + jigX(), y = CARR_Y + 13.5, on = clamp(lamp, 0, 1.4), S0 = SHADE;
     const halo = g.createRadialGradient(x, y, 1, x, y, 18);
     halo.addColorStop(0, `rgba(255,233,196,${.55 * on})`); halo.addColorStop(1, 'rgba(255,233,196,0)');
     g.globalCompositeOperation = 'screen'; g.fillStyle = halo; g.fillRect(x - 18, y - 18, 36, 36); g.globalCompositeOperation = 'source-over';
+    // the bulb and its wire guard hang out of the shade: only what is below its front rim shows
+    g.save();
+    g.beginPath(); g.moveTo(x - 30, S0.y1); g.lineTo(x - S0.r1, S0.y1); g.ellipse(x, S0.y1, S0.r1, S0.r1 * CE, 0, Math.PI, 0, true);
+    g.lineTo(x + 30, S0.y1); g.lineTo(x + 30, S0.y1 + 30); g.lineTo(x - 30, S0.y1 + 30); g.closePath(); g.clip();
     const bl = g.createRadialGradient(x - 1.2, y - 1.4, .4, x, y, 4.6);
     bl.addColorStop(0, '#fffdf5'); bl.addColorStop(.5, `rgb(255,${Math.round(214 + 20 * Math.min(1, on))},150)`); bl.addColorStop(1, '#c9913d');
     g.fillStyle = bl; g.beginPath(); g.arc(x, y, 4.4, 0, TAU); g.fill();
-    // wire cage
     g.strokeStyle = 'rgba(40,43,48,.9)'; g.lineWidth = .7;
     g.beginPath(); g.ellipse(x, y, 5.6, 5.6, 0, Math.PI * .95, Math.PI * 2.05); g.stroke();
     for (const s of [-.45, 0, .45]) { g.beginPath(); g.moveTo(x + s * 6, y - 4.5); g.quadraticCurveTo(x + s * 11, y + 3, x + s * 2, y + 6.4); g.stroke(); }
+    g.restore();
+    // the rolled rim of the shade, lit from the bulb beneath it
+    g.lineWidth = .8; g.strokeStyle = `rgba(255,226,170,${(.55 * Math.min(1, on)).toFixed(3)})`;
+    g.beginPath(); g.ellipse(x, S0.y1 + .35, S0.r1 - .3, (S0.r1 - .3) * CE, 0, .15, Math.PI - .15); g.stroke();
   }
   // the trolley lamp: everything outside its cone goes dark, the cone itself carries a little warm haze
   function drawLight(g) {
@@ -994,11 +1392,13 @@ window.Machine = function (canvas, hooks) {
     g.save(); g.translate(sx, sy); view(g, cam.z, cam.x, cam.y);
     g.drawImage(lay.box.cv, 0, 0, W, H);
     drawShadows(g);
+    drawClawBack(g);
     for (const k of cans) if (!k.gone && !k.leaving && k !== c.held) drawCanBody(g, k, zr);
     for (const k of cans) if (!k.gone && k.leaving) drawCanBody(g, k, 0);
     drawSpot(g);
     g.drawImage(lay.front.cv, 0, FP - 4, CHUTE_IN, H - FP + 6);
     if (c.held) drawCanBody(g, c.held, zr);
+    drawClawShade(g);
     drawClaw(g);
     drawRider(g);
     drawCarriage(g);

@@ -64,40 +64,81 @@ window.ART = (() => {
   }
 
   // ---------- light ----------
+  // Shading happens in a world frame (x right, y up, z out of the glass toward the viewer). The camera looks a
+  // little down into the machine (sin elevation = E), so every end that faces up or toward us shows as an ellipse.
   const rgbOf = s => [1, 3, 5].map(i => parseInt(s.slice(i, i + 2), 16));
-  const LO = rgbOf(C.TIN_LO), LAMPC = rgbOf(C.LAMP);
-  const HIW = rgbOf(C.TIN_HI).map((v, i) => v * (.55 + .45 * LAMPC[i] / 255));   // lit tin takes the lamp's warmth
-  const GLINT = [255, 250, 240];
   const mixc = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
-  const css = (c, a = 1) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${+a.toFixed(3)})`;
-  const tinRGB = f => { f = clamp(f, 0, 1.2); return f <= 1 ? mixc(LO, HIW, f) : mixc(HIW, GLINT, (f - 1) / .2); };
+  const css = (c, a = 1) => `rgba(${clamp(c[0], 0, 255) | 0},${clamp(c[1], 0, 255) | 0},${clamp(c[2], 0, 255) | 0},${+clamp(a, 0, 1).toFixed(3)})`;
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const n3 = a => { const n = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / n, a[1] / n, a[2] / n]; };
+  const lin3 = (a, ka, b, kb) => [a[0] * ka + b[0] * kb, a[1] * ka + b[1] * kb, a[2] * ka + b[2] * kb];
+  const lobe = (a, c, p) => Math.pow(Math.max(0, Math.cos(a - c)), p);
+  const Lw = [LIGHT.x, -LIGHT.y, LIGHT.z], Dv = [0, E, Math.sqrt(1 - E * E)], Hv = n3(lin3(Lw, 1, Dv, 1));
+  // the same room as the wheel: cool fill from the dark cabinet, warm key from the lamp
+  const ROOM = [.52, .56, .66], PROOM = [.64, .67, .74], LAMPK = rgbOf(C.LAMP).map(v => v / 255), LAMPP = [1, .955, .87];
+  const TINA = [176, 182, 189], WALLR = [.66, .6, .52];
+  const YAW = .075;                                          // radians per step of a can's turn toward or away from us
 
-  // Shading across a cylinder whose +u side points along world angle q/256 turns. Cached, context free.
-  const PROF = new Map();
-  function profile(q, lq) {
-    const key = q * 21 + lq; let p = PROF.get(key); if (p) return p;
-    const an = q / 256 * TAU, ex = Math.cos(an), ey = Math.sin(an), lit = lq / 20;
-    const k = LIGHT.x * ex + LIGHT.y * ey, kh = HALF.x * ex + HALF.y * ey, ha = HALF.y * ex - HALF.x * ey;
-    const str = .3 + .7 * Math.pow(Math.max(0, 1 - ha * ha), 3);   // weaker streak when the lamp sits along the axis
-    const us = kh / Math.hypot(kh, HALF.z);
-    const diff = u => Math.max(0, u * k + Math.sqrt(Math.max(0, 1 - u * u)) * LIGHT.z);
-    const U = [-1, -.93, -.8, -.6, -.35, 0, .35, .6, .8, .93, 1];
-    for (const d of [-.3, -.14, -.05, 0, .05, .14, .3]) if (us + d > -1 && us + d < 1) U.push(us + d);
+  // A can's pose in 3D from its screen angle (q/256 turn of its local +x), a mirror flag and a yaw step.
+  // Its axis stays the physics axis on screen; yaw only decides how much of an end we see and how it is lit.
+  const POSE = new Map();
+  function pose(q, mir, yq) {
+    const key = (q * 2 + mir) * 32 + yq + 16; let p = POSE.get(key); if (p) return p;
+    const an = q / 256 * TAU, ca = Math.cos(an), sa = Math.sin(an), ux = mir ? -sa : sa, uy = mir ? -ca : ca, ps = yq * YAW;
+    const A = [ux * Math.cos(ps), uy, ux * Math.sin(ps)], ad = dot(A, Dv), s = ad >= 0 ? 1 : -1;
+    const Cf = n3(lin3(Dv, 1, A, -ad));                       // the side normal that faces the camera
+    let Bs = n3([A[1] * Cf[2] - A[2] * Cf[1], A[2] * Cf[0] - A[0] * Cf[2], A[0] * Cf[1] - A[1] * Cf[0]]);
+    if (Bs[0] * ca - Bs[1] * sa < 0) Bs = [-Bs[0], -Bs[1], -Bs[2]];   // Bs runs along local +x
+    const Ne = [A[0] * s, A[1] * s, A[2] * s], Ey = [Cf[0] * s, Cf[1] * s, Cf[2] * s];   // the visible end: normal, and its local +y
+    const bh = dot(Bs, Hv), ch = dot(Cf, Hv), hp = Math.hypot(bh, ch);
+    const dE = dot(Ne, Lw), hE = dot(Ne, Hv), Lt = lin3(Lw, 1, Ne, -dE), Ht = lin3(Hv, 1, Ne, -hE);
+    const ltx = dot(Lt, Bs), lty = dot(Lt, Ey), sh = 1 / Math.max(.2, dE);
+    p = { A, s, k: Math.abs(ad), Bs, Cf, Ne, Ey, us: bh / (hp || 1), str: .22 + .78 * Math.pow(hp, 6), bl: dot(Bs, Lw), cl: dot(Cf, Lw),
+      la: dot(A, Lw), dE, hE, AZ: Math.atan2(lty, ltx), AH: Math.atan2(dot(Ht, Ey), dot(Ht, Bs)), lt: Math.hypot(ltx, lty),
+      shx: -ltx * sh, shy: -lty * sh };
+    POSE.set(key, p); return p;
+  }
+  // light across the turned side, u = -1..1 along local x: tin (a dark mirror of the cabinet with the lamp in it),
+  // the multiply that lights printed ink (cool in shade, warm toward the lamp), and the varnish's own highlight
+  const SIDE = new Map();
+  function side(p, lq) {
+    const key = p; let m = SIDE.get(key); if (!m) SIDE.set(key, m = []);
+    if (m[lq]) return m[lq];
+    const lit = lq / 20, us = p.us, uo = clamp(us + (us < 0 ? .98 : -.98), -.93, .93);
+    const U = [-1, -.975, -.93, -.85, -.72, -.55, -.32, -.1, .1, .32, .55, .72, .85, .93, .975, 1];
+    for (const d of [-.3, -.16, -.08, -.035, 0, .035, .08, .16, .3]) if (us + d > -1 && us + d < 1) U.push(us + d);
     U.sort((a, b) => a - b);
     const metal = [], shade = [], gloss = [];
     for (const u of U) {
-      const o = (u + 1) / 2, e = Math.abs(u), dd = diff(u), du = u - us;
-      // tin mostly mirrors a dark room: a dim body, one hard streak of lamp, a softer bloom round it
-      const sp = str * lit * (bell(du, .05) + .32 * bell(du, .22));
-      metal.push([o, css(mixc(tinRGB((.1 + .6 * lit * dd) * (1 - .45 * Math.pow(e, 6))), GLINT, Math.min(1, sp)))]);
-      shade.push([o, `rgba(0,0,0,${clamp(1 - (.2 + 1.25 * lit * dd) * (1 - .55 * Math.pow(e, 7)), 0, .92).toFixed(3)})`]);
-      gloss.push([o, `rgba(255,247,232,${Math.min(.6, .36 * str * lit * (bell(du, .1) + .35 * bell(du, .32))).toFixed(3)})`]);
+      const o = (u + 1) / 2, e = Math.abs(u), q = Math.sqrt(Math.max(0, 1 - u * u)), d = Math.max(0, u * p.bl + q * p.cl), du = u - us;
+      const fr = 1 - .5 * Math.pow(e, 5);                       // grazing tin mirrors the black back of the cabinet
+      const lamp = lit * p.str * (1.2 * bell(du, .04) + .36 * bell(du, .14) + .16 * bell(du, .4));
+      const wall = lit * .2 * bell(u - uo, .16);
+      metal.push([o, css([0, 1, 2].map(i => (TINA[i] * (.44 * ROOM[i] + .74 * lit * d * LAMPK[i]) * fr + 255 * (lamp * LAMPK[i] + wall * WALLR[i]))))]);
+      const ml = [0, 1, 2].map(i => Math.min(1, .38 * PROOM[i] + 1.02 * lit * d * LAMPP[i]) * (1 - .3 * Math.pow(e, 7)));
+      const dk = clamp(1 - (ml[0] + ml[1] + ml[2]) / 2.9, 0, .9), wa = .1 * lit * d * (1 - 2 * dk);   // over the ink: cool dark or warm cast
+      shade.push([o, dk > wa ? css([14, 18, 30], dk) : css([255, 224, 176], wa)]);
+      gloss.push([o, css([255, 248, 236], lit * p.str * (.2 * bell(du, .05) + .13 * bell(du, .22)) + .05 * lit * Math.pow(e, 8) * (u * us > 0 ? 1 : 0))]);
     }
-    p = { k, us, str, metal, shade, gloss };
-    PROF.set(key, p); return p;
+    return (m[lq] = { metal, shade, gloss });
   }
   function stops(gr, list) { for (const [o, c] of list) gr.addColorStop(clamp(o, 0, 1), c); return gr; }
   const lin = (g, hw, list) => stops(g.createLinearGradient(-hw, 0, hw, 0), list);
+  // kept for metalGrad: a rolled surface whose +u side points along q
+  const profile = (q, lq) => side(pose(q, 0, 0), lq);
+  // an angle-only gradient round a centre (lid rings, spun tin), from stops sampled round the circle;
+  // a ramp across the lamp azimuth stands in where conic gradients are missing
+  const CN = 36;
+  function conic(g, list, az, r) {
+    if (typeof g.createConicGradient === 'function') {
+      const gr = g.createConicGradient(0, 0, 0);
+      if (gr && typeof gr.addColorStop === 'function') { for (let i = 0; i <= CN; i++) gr.addColorStop(i / CN, list[i % CN]); return gr; }
+    }
+    const at = a => list[((Math.round(a / TAU * CN) % CN) + CN) % CN], ca = Math.cos(az), sa = Math.sin(az);
+    const gr = g.createLinearGradient(-r * ca, -r * sa, r * ca, r * sa);
+    gr.addColorStop(0, at(az + Math.PI)); gr.addColorStop(.5, at(az + Math.PI / 2)); gr.addColorStop(1, at(az));
+    return gr;
+  }
 
   // current transform: world directions of the local axes, device pixels per unit, screen position
   const FR = { a: 1, b: 0, c: 0, d: 1, xx: 1, xy: 0, sc: 1, mir: 0, e: 0, f: 0, ok: false };
@@ -113,29 +154,57 @@ window.ART = (() => {
   const alphaOf = g => (typeof g.globalAlpha === 'number' && isFinite(g.globalAlpha) ? g.globalAlpha : 1);
   const quant = an => ((Math.round(an / TAU * 256) % 256) + 256) % 256;
 
-  // per-context gradients: built in local units, so one set serves every can of that size and angle
+  // per-context gradients in local units, so one set serves every can of that size, pose and lamp level
   const GC = new WeakMap();
-  function grads(g, q, lq, mir, hw) {
+  function grads(g, q, lq, mir, yq, hw, h) {
     let m = GC.get(g); if (!m) GC.set(g, m = new Map());
-    const key = ((q * 21 + lq) * 2 + mir) * 4096 + Math.min(4095, Math.round(hw * 8));
+    const key = (((((q * 21 + lq) * 2 + mir) * 32 + yq + 16) * 4096) + Math.min(4095, Math.round(hw * 8))) * 8192 + Math.min(8191, Math.round(h * 8));
     let r = m.get(key); if (r) return r;
     if (m.size > 1200) m.clear();
-    const p = profile(q, lq), an = q / 256 * TAU, lit = lq / 20, fl0 = mir ? -1 : 1;
-    const cu = fl0 * Math.cos(an), s = cu >= 0 ? 1 : -1;
-    const dCap = s * fl0 * (LIGHT.x * Math.sin(an) - LIGHT.y * Math.cos(an));   // lamp on the lid that faces up
-    const fl = .1 + .72 * lit * Math.max(0, dCap), sg = p.k < 0 ? 1 : -1, up = Math.max(0, dCap), dn = Math.max(0, -dCap);
-    r = {
-      k: p.k, s, cu, metal: lin(g, hw, p.metal), shade: lin(g, hw, p.shade), gloss: lin(g, hw, p.gloss),
-      lid: lin(g, hw, [[0, css(tinRGB(fl * (1 + .13 * sg)))], [.5, css(tinRGB(fl))], [1, css(tinRGB(fl * (1 - .13 * sg)))]]),
-      capTone: up ? `rgba(255,246,230,${(.2 * lit * up).toFixed(3)})` : `rgba(0,0,0,${(.3 * dn).toFixed(3)})`,
-      baseTone: `rgba(0,0,0,${(.08 + .26 * up).toFixed(3)})`,
-      crestA: `rgba(255,250,240,${(.18 + .45 * lit * up).toFixed(3)})`, crestB: `rgba(255,250,240,${(.1 + .22 * lit * dn).toFixed(3)})`,
-      sheen: (() => { const gr = g.createRadialGradient(-hw * .3 * sg, -hw * .45 * s, 0, -hw * .3 * sg, -hw * .45 * s, hw * .95);
-        gr.addColorStop(0, `rgba(255,244,222,${(.34 * lit * up).toFixed(3)})`); gr.addColorStop(1, 'rgba(255,244,222,0)'); return gr; })(),
-      edge: `rgba(255,244,226,${(.12 + .3 * lit).toFixed(3)})`, groove: `rgba(0,0,0,${(.22 + .12 * lit).toFixed(3)})`,
-      wall: `rgba(255,248,236,${(.08 + .2 * lit * up).toFixed(3)})`, crescent: `rgba(255,250,240,${(.2 + .5 * lit * up).toFixed(3)})`,
-    };
+    const P = pose(q, mir, yq), S = side(P, lq), lit = lq / 20, up = Math.max(0, P.la * P.s);
+    r = { P, lit, lq, hw, metal: lin(g, hw, S.metal), shade: lin(g, hw, S.shade), gloss: lin(g, hw, S.gloss), lid: null,
+      seamHi: `rgba(255,246,228,${(.1 + .5 * lit * Math.max(0, P.dE)).toFixed(3)})`,
+      footHi: `rgba(255,246,228,${(.06 + .34 * lit * up).toFixed(3)})`,
+      lipAO: `rgba(12,9,7,${(.22 + .16 * lit * up).toFixed(3)})`,
+      edge: `rgba(255,240,215,${(.1 + .32 * lit).toFixed(3)})` };
+    const st = g.createRadialGradient(0, 0, 0, 0, 0, 1), sa = lit * P.str;
+    st.addColorStop(0, `rgba(255,251,242,${(.62 * sa).toFixed(3)})`); st.addColorStop(.3, `rgba(255,248,236,${(.3 * sa).toFixed(3)})`); st.addColorStop(1, 'rgba(255,248,236,0)');
+    r.streak = st;
+    // the lamp hangs above: the end toward it keeps the light, the other sinks into the shade of the pile
+    const hp = Math.min(h / 2 - hw * E * .6, h / 2 + hw * E * .4 - hw * P.k), toward = P.la * P.s > 0 ? -P.s : P.s, fall = g.createLinearGradient(0, toward * hp, 0, -toward * hp);
+    fall.addColorStop(0, 'rgba(10,8,6,0)'); fall.addColorStop(.45, 'rgba(10,8,6,0)'); fall.addColorStop(1, `rgba(10,8,6,${(.07 + .2 * Math.abs(P.la)).toFixed(3)})`);
+    r.fall = fall;
     m.set(key, r); return r;
+  }
+  // the end we look at: crest of the double seam, countersink wall, spun panel, and the lights on its beads.
+  // Colour stops round the circle depend only on pose and lamp, so they are shared by every context.
+  const LIDS = new Map();
+  function lidStops(P, lq) {
+    let m = LIDS.get(P); if (!m) LIDS.set(P, m = []);
+    if (m[lq]) return m[lq];
+    const lit = lq / 20, Ne = P.Ne, Bs = P.Bs, Ey = P.Ey;
+    const tin = (N, amb, kd, ks, pw, k2) => {
+      const d = Math.max(0, dot(N, Lw)), hs = Math.max(0, dot(N, Hv)), sp = lit * (ks * Math.pow(hs, pw) + k2 * Math.pow(hs, 4));
+      return css([0, 1, 2].map(i => TINA[i] * (amb * ROOM[i] + kd * lit * d * LAMPK[i]) + 255 * sp * LAMPK[i]));
+    };
+    const bowK = lit * .3 * clamp(.35 + P.hE, .25, 1), dE = Math.max(0, P.dE), o = { crest: [], wall: [], panel: [], out: [], lip: [] };
+    for (let i = 0; i < CN; i++) {
+      const a = i / CN * TAU, rd = lin3(Bs, Math.cos(a), Ey, Math.sin(a));
+      o.crest.push(tin(n3(lin3(Ne, .6, rd, .8)), .42, .8, .75, 28, .12));
+      o.wall.push(tin(n3(lin3(rd, -.9, Ne, .3)), .3, .85, .45, 16, .06));
+      const b = lobe(a, P.AH, 12) + lobe(a, P.AH + Math.PI, 12), t = 1 + .08 * lit * lobe(a, P.AZ, 1.5);
+      o.panel.push(css([0, 1, 2].map(k => TINA[k] * (.42 * ROOM[k] + .7 * lit * dE * LAMPK[k]) * t + 255 * bowK * b * LAMPK[k])));
+      const l = lobe(a, P.AZ, 2) * P.lt, d = lobe(a, P.AZ + Math.PI, 2) * P.lt;
+      o.out.push(l >= d ? css([255, 243, 222], .75 * lit * l) : css([10, 8, 6], .5 * d));
+      o.lip.push(css([10, 8, 6], .16 + (.2 + .22 * lit) * Math.min(1, P.lt * 1.4) * lobe(a, P.AZ, 1.6)));
+    }
+    return (m[lq] = o);
+  }
+  function lidGrads(g, r) {
+    if (r.lid) return r.lid;
+    const P = r.P, hw = r.hw, S = lidStops(P, r.lq);
+    return (r.lid = { crest: conic(g, S.crest, P.AZ, hw), wall: conic(g, S.wall, P.AZ, hw), panel: conic(g, S.panel, P.AZ, hw),
+      out: conic(g, S.out, P.AZ, hw), lip: conic(g, S.lip, P.AZ, hw) });
   }
 
   // ---------- metal helpers for the rest of the scene ----------
@@ -333,6 +402,7 @@ window.ART = (() => {
     return t;
   }
 
+
   // ---------- the can ----------
   // half ellipse centred (0, cy), bulging toward +y when dir > 0, traced left to right when ltr
   function half(g, cy, rx, ry, dir, ltr) {
@@ -342,81 +412,113 @@ window.ART = (() => {
   function band(g, y0, y1, hw, ry, s) {
     g.beginPath(); g.moveTo(-hw, y0); half(g, y0, hw, ry, s, true); g.lineTo(hw, y1); half(g, y1, hw, ry, s, false); g.closePath();
   }
+  function arcLine(g, y, rx, ry, s, lw, col) { g.beginPath(); g.moveTo(-rx, y); half(g, y, rx, ry, s, true); g.lineWidth = lw; g.strokeStyle = col; g.stroke(); }
+  // Soft shadow on the floor: a dark ring where the rim meets it, then the can's shade thrown right and back,
+  // away from the lamp (the floor seen from a little above, so "back" is up the screen).
+  const SHF = [-Lw[0] / Lw[1], Lw[2] / Lw[1] * E];
   function dropShadow(g, ang, w, h) {
     const c = Math.abs(Math.cos(ang)), s = Math.abs(Math.sin(ang));
-    const ex = w / 2 * c + h / 2 * s, ey = w / 2 * s + h / 2 * c, rx = ex * 1.15, ry = Math.max(2.5, w * .12);
-    g.save(); g.translate(ex * .16, ey - ry * .3); g.scale(1, ry / rx);   // falls right and back, away from the lamp
-    const gr = g.createRadialGradient(0, 0, 0, 0, 0, rx);
-    gr.addColorStop(0, 'rgba(10,9,12,.42)'); gr.addColorStop(.45, 'rgba(10,9,12,.2)'); gr.addColorStop(1, 'rgba(10,9,12,0)');
-    g.fillStyle = gr; g.beginPath(); g.arc(0, 0, rx, 0, TAU); g.fill(); g.restore();
+    const ex = w / 2 * c + h / 2 * s, ey = w / 2 * s + h / 2 * c, tall = h * c + w * s * .9;
+    g.save(); g.translate(0, ey - ex * E * .45); g.scale(1, E);          // the floor's own plane, seen from a little above
+    const tx = SHF[0] * tall * .9, ty = -SHF[1] / E * tall * .9, gr = g.createLinearGradient(0, 0, tx, ty);
+    gr.addColorStop(0, 'rgba(8,6,5,.3)'); gr.addColorStop(.55, 'rgba(8,6,5,.12)'); gr.addColorStop(1, 'rgba(8,6,5,0)');
+    g.strokeStyle = gr; g.lineCap = 'round';
+    for (const k of [1.32, 1.14, .98]) { g.lineWidth = 2 * ex * k; g.beginPath(); g.moveTo(0, 0); g.lineTo(tx, ty); g.stroke(); }
+    const cg = g.createRadialGradient(0, 0, ex * .84, 0, 0, ex * 1.12);
+    cg.addColorStop(0, 'rgba(6,5,4,.6)'); cg.addColorStop(1, 'rgba(6,5,4,0)');
+    g.fillStyle = cg; g.beginPath(); g.arc(0, 0, ex * 1.12, 0, TAU); g.fill();
+    g.restore();
   }
 
+  const RB = .972;                                            // the body sits a hair inside its seams
   const labelH = (w, h) => h * .844 - w * E * .6;
-  // The can in its own frame (axis along y), shaded by the lighting set R that was chosen for its world pose.
+  // lathe marks on the spun panel (fractions of the radius)
+  const LATHE = (() => { const R = rng(0x1a7e), out = []; for (let r = .1; r < .84; r += .018 + R() * .03) out.push({ r, w: .004 + R() * .006, c: R() < .5 ? `rgba(255,250,240,${(.05 + R() * .08).toFixed(3)})` : `rgba(14,16,20,${(.05 + R() * .07).toFixed(3)})` }); return out; })();
+  // The can in its own frame (axis along y), shaded by the lighting set R chosen for its world pose.
   function paintCan(g, L, T, w, h, R, sc, u0, rim) {
-    const hw = w / 2, hh = h / 2, s = R.s, ryM = hw * E, ry = Math.max(.01, ryM * Math.abs(R.cu)), hp = hh - ryM * .6;
-    const seam = h * .05, ly0 = -hp + seam + h * .028, capY = -s * hp, baseY = s * hp, ga = alphaOf(g);
+    const P = R.P, hw = w / 2, rb = hw * RB, hh = h / 2, s = P.s, ryM = hw * E, ry = Math.max(.01, hw * P.k), ryb = ry * RB;
+    const hp = Math.min(hh - ryM * .6, hh + ryM * .4 - ry), seam = h * .052, foot = h * .044, ga = alphaOf(g);
+    const ly0 = -hp + seam + h * .026, capY = -s * hp, baseY = s * hp;
     const lh = 2 * -ly0, px = w * sc, upr = hw / T.P, n = px < 28 ? 10 : px < 70 ? 16 : px < 140 ? 24 : px < 260 ? 36 : 48;
     const dt = Math.PI / n, ov = .8 / sc, sw = dt * upr * T.per, thin = Math.max(.5 / sc, h * .01), fine = px > 22;
-    const outline = () => { g.beginPath(); g.moveTo(-hw, capY); half(g, capY, hw, ry, -s, true); g.lineTo(hw, baseY); half(g, baseY, hw, ry, s, false); g.closePath(); };
-    outline(); g.fillStyle = R.metal; g.fill();
+    // body: bare tin wherever the print does not cover it
+    g.beginPath(); g.moveTo(-rb, capY); half(g, capY, rb, ryb, -s, true); g.lineTo(rb, baseY); half(g, baseY, rb, ryb, s, false); g.closePath();
+    g.fillStyle = R.metal; g.fill();
     // printed label, wrapped: equal steps of turn, so the print crowds together toward the silhouette.
     // Held a hair inside the silhouette: image edges are not antialiased, the shading that covers them is.
-    const lr = hw - .9 / sc;
+    const lr = rb - .9 / sc;
     let xa = -lr;
     for (let i = 0; i < n; i++) {
       const t0 = -Math.PI / 2 + i * dt, xb = i === n - 1 ? lr : lr * Math.sin(t0 + dt);
       let u = u0 + t0 * upr; u -= Math.floor(u);
-      g.drawImage(T.cv, u * T.per, 0, sw, T.cv.height, xa, ly0 + s * ry * Math.cos(t0 + dt / 2), xb - xa + (i < n - 1 ? ov : 0), lh);
+      g.drawImage(T.cv, u * T.per, 0, sw, T.cv.height, xa, ly0 + s * ryb * Math.cos(t0 + dt / 2), xb - xa + (i < n - 1 ? ov : 0), lh);
       xa = xb;
     }
-    // lamp and varnish over the print (bare tin is already shaded underneath, and its ink is black)
-    band(g, ly0, -ly0, hw, ry, s);
+    // the lamp on the ink: cool shade where the side turns away, a warm cast toward the lamp, the varnish's own highlight
+    band(g, ly0, -ly0, rb, ryb, s);
     if (!L.bare) { g.fillStyle = R.shade; g.fill(); }
-    g.globalAlpha = ga * (L.bare ? .5 : 1); g.fillStyle = R.gloss; g.fill(); g.globalAlpha = ga;
+    g.globalAlpha = ga * (L.bare ? .45 : 1); g.fillStyle = R.gloss; g.fill(); g.globalAlpha = ga;
+    if (!L.bare && px > 26 && Math.abs(P.us) < .8) {
+      // the varnish carries the lamp as a streak that runs with the axis, strongest toward the lamp's end
+      const yc = (P.la * s > 0 ? -1 : 1) * s * lh * .1;
+      g.save(); g.translate(P.us * rb, yc); g.scale(rb * .075, lh * .44);
+      g.fillStyle = R.streak; g.beginPath(); g.arc(0, 0, 1, 0, TAU); g.fill(); g.restore();
+    }
     if (fine && !L.bare) {
-      g.lineWidth = thin * .8; g.strokeStyle = 'rgba(0,0,0,.2)';
-      g.beginPath(); g.moveTo(-hw, ly0); half(g, ly0, hw, ry, s, true); g.moveTo(-hw, -ly0); half(g, -ly0, hw, ry, s, true); g.stroke();
+      g.beginPath(); g.moveTo(-rb, ly0); half(g, ly0, rb, ryb, s, true); g.moveTo(-rb, -ly0); half(g, -ly0, rb, ryb, s, true);
+      g.lineWidth = thin * .7; g.strokeStyle = 'rgba(0,0,0,.18)'; g.stroke();
     }
-    // double seams: the end nearer the lamp catches it, the far end sits in its own shade
-    band(g, capY, capY + s * seam, hw, ry, s); g.fillStyle = R.capTone; g.fill();
-    band(g, baseY - s * seam, baseY, hw, ry, s); g.fillStyle = R.baseTone; g.fill();
-    if (fine) {
-      g.lineWidth = Math.max(.5 / sc, h * .014);
-      g.beginPath(); g.moveTo(-hw, capY + s * seam * .45); half(g, capY + s * seam * .45, hw, ry, s, true); g.strokeStyle = R.crestA; g.stroke();
-      g.beginPath(); g.moveTo(-hw, baseY - s * seam * .55); half(g, baseY - s * seam * .55, hw, ry, s, true); g.strokeStyle = R.crestB; g.stroke();
-    }
-    // the lid on whichever end faces up
+    // the end we look at: countersink wall, the spun panel sunk below the seam, then the seam's crest over both
     if (ry * sc > .9) {
-      g.beginPath(); g.ellipse(0, capY, hw, ry, 0, 0, TAU); g.fillStyle = R.lid; g.fill();
-      g.save(); g.translate(0, capY); g.scale(1, ry / hw); g.fillStyle = R.sheen; g.beginPath(); g.arc(0, 0, hw, 0, TAU); g.fill(); g.restore();
-      if (ry * sc > 2) {
-        g.lineWidth = Math.max(.9 / sc, w * .028); g.strokeStyle = R.groove;
-        g.beginPath(); g.ellipse(0, capY, hw * .84, ry * .84, 0, 0, TAU); g.stroke();                 // countersink
-        g.lineWidth = Math.max(.6 / sc, w * .012); g.strokeStyle = R.wall;
-        g.beginPath(); g.moveTo(-hw * .79, capY); half(g, capY, hw * .79, ry * .79, s, true); g.stroke();
-        g.lineWidth = Math.max(.7 / sc, w * .02); g.strokeStyle = R.crescent;
-        g.beginPath(); g.moveTo(-hw * .955, capY); half(g, capY, hw * .955, ry * .955, -s, true); g.stroke();   // seam crest, far side
-        g.lineWidth = thin; g.strokeStyle = 'rgba(0,0,0,.26)';
-        g.beginPath(); g.moveTo(-hw, capY); half(g, capY, hw, ry, s, true); g.stroke();
-        if (px > 80) for (const k of [.6, .38]) {
-          g.lineWidth = thin * .8;
-          g.strokeStyle = 'rgba(0,0,0,.1)'; g.beginPath(); g.moveTo(-hw * k, capY); half(g, capY, hw * k, ry * k, -s, true); g.stroke();
-          g.strokeStyle = 'rgba(255,250,240,.12)'; g.beginPath(); g.moveTo(-hw * k, capY); half(g, capY, hw * k, ry * k, s, true); g.stroke();
+      const Z = lidGrads(g, R), k = ry / hw, dc = w * .032;
+      g.save(); g.translate(0, capY); g.scale(1, k);
+      g.beginPath(); g.arc(0, 0, hw * .885, 0, TAU); g.fillStyle = Z.wall; g.fill();
+      if (ry * sc > 1.6) {
+        // seen from above, the far wall of the countersink shows as a crescent; what pokes out near us is covered by the seam
+        g.save(); g.translate(0, s * dc * Math.sqrt(Math.max(0, 1 - P.k * P.k)) / k);
+        g.beginPath(); g.arc(0, 0, hw * .85, 0, TAU); g.fillStyle = Z.panel; g.fill();
+        if (px > 90) for (const l of LATHE) { g.beginPath(); g.arc(0, 0, hw * l.r, 0, TAU); g.lineWidth = hw * l.w; g.strokeStyle = l.c; g.stroke(); }
+        if (px > 26) {
+          // expansion beads: the flank that faces the lamp catches it, the other side drops into shade
+          const bw = Math.max(.6 / sc, hw * .035), rs = px > 70 ? [.64, .43] : [.58];
+          g.lineWidth = bw; g.strokeStyle = Z.out; g.beginPath();
+          for (const f of rs) { g.moveTo(hw * f + bw * .5, 0); g.arc(0, 0, hw * f + bw * .5, 0, TAU); }
+          g.stroke(); g.rotate(Math.PI); g.beginPath();                     // the inner flanks: the same light turned half round
+          for (const f of rs) { g.moveTo(hw * f - bw * .5, 0); g.arc(0, 0, hw * f - bw * .5, 0, TAU); }
+          g.stroke(); g.rotate(-Math.PI);
+          // the seam's shadow along the lamp side of the panel, over the dark of the countersink
+          g.lineWidth = hw * .13; g.strokeStyle = Z.lip; g.beginPath(); g.arc(0, 0, hw * .79, 0, TAU); g.stroke();
         }
+        g.restore();
       }
+      g.beginPath(); g.arc(0, 0, hw, 0, TAU); g.arc(0, 0, hw * .885, 0, TAU); g.fillStyle = Z.crest; g.fill('evenodd');
+      g.lineWidth = Math.max(.6 / sc, hw * .028); g.strokeStyle = Z.out; g.beginPath(); g.arc(0, 0, hw * .975, 0, TAU); g.stroke();
+      if (ry * sc > 1.6) { g.rotate(Math.PI); g.lineWidth = Math.max(.6 / sc, hw * .03); g.beginPath(); g.arc(0, 0, hw * .9, 0, TAU); g.stroke(); }
+      g.restore();
     }
+    // the two double seams stand proud of the body: a turned band each, a lit crest, a shadow tucked under
+    band(g, baseY - s * foot, baseY, hw, ry, s);
+    g.moveTo(-hw, capY); half(g, capY, hw, ry, s, true); g.lineTo(hw, capY + s * seam); half(g, capY + s * seam, hw, ry, s, false); g.closePath();
+    g.fillStyle = R.metal; g.fill();
+    if (fine) {
+      const lw = Math.max(.5 / sc, h * .013), ya = capY + s * (seam + lw * .5), yb = baseY - s * (foot + lw * .45);
+      g.beginPath(); g.moveTo(-rb, ya); half(g, ya, rb, ryb, s, true); g.moveTo(-rb, yb); half(g, yb, rb, ryb, s, true);
+      g.lineWidth = lw; g.strokeStyle = R.lipAO; g.stroke();
+      arcLine(g, capY + s * seam * .32, hw, ry, s, lw * .9, R.seamHi);
+      arcLine(g, baseY - s * foot * .72, hw, ry, s, lw * .8, R.footHi);
+    }
+    band(g, capY, baseY, hw, ry, s); g.fillStyle = R.fall; g.fill();
     // the edge that faces the lamp
-    if (Math.abs(R.k) > .04) {
-      const lw = .75 / sc, xs = (R.k < 0 ? -1 : 1) * (hw - lw / 2);
-      g.beginPath(); g.moveTo(xs, capY); g.lineTo(xs, baseY); g.lineWidth = lw; g.strokeStyle = R.edge; g.stroke();
+    if (Math.abs(P.us) > .04) {
+      const lw = .75 / sc, xs = (P.us < 0 ? -1 : 1) * (rb - lw / 2);
+      g.beginPath(); g.moveTo(xs, capY + s * seam); g.lineTo(xs, baseY - s * foot); g.lineWidth = lw; g.strokeStyle = R.edge; g.stroke();
     }
     if (rim > 0) rimLight(g, w, h, R, sc, rim);
   }
   // warm rim on the lamp side; additive, so it can go over a cached sprite as well
   function rimLight(g, w, h, R, sc, rim) {
-    const hw = w / 2, s = R.s, ryM = hw * E, ry = Math.max(.01, ryM * Math.abs(R.cu)), hp = h / 2 - ryM * .6, capY = -s * hp, baseY = s * hp;
-    const xs = R.k < 0 ? -hw : hw, dir = R.k < 0 ? 1 : -1, gr = g.createLinearGradient(xs, 0, xs + dir * w * .22, 0), lw = 1.5 / sc;
+    const P = R.P, hw = w / 2, s = P.s, ryM = hw * E, ry = Math.max(.01, hw * P.k), hp = Math.min(h / 2 - ryM * .6, h / 2 + ryM * .4 - ry), capY = -s * hp, baseY = s * hp;
+    const xs = P.us < 0 ? -hw : hw, dir = P.us < 0 ? 1 : -1, gr = g.createLinearGradient(xs, 0, xs + dir * w * .22, 0), lw = 1.5 / sc;
     gr.addColorStop(0, `rgba(255,217,154,${(.6 * rim).toFixed(3)})`); gr.addColorStop(1, 'rgba(255,217,154,0)');
     g.save(); g.globalCompositeOperation = 'lighter';
     g.beginPath(); g.moveTo(-hw, capY); half(g, capY, hw, ry, -s, true); g.lineTo(hw, baseY); half(g, baseY, hw, ry, s, false); g.closePath();
@@ -426,13 +528,55 @@ window.ART = (() => {
     if (ry * sc > 1) { g.beginPath(); g.moveTo(-hw, capY); half(g, capY, hw, ry, -s, true); g.globalAlpha = alphaOf(g) * .7; g.stroke(); }
     g.restore();
   }
+  // crushed: the ends keep their round, the wall between them buckles into folds that bulge out
+  function crush(g, L, T, w, h, R, sc, u0, sq, seed) {
+    const P = R.P, s = P.s, hw = w / 2, ry = Math.max(.01, hw * P.k), hp = Math.min(h / 2 - hw * E * .6, h / 2 + hw * E * .4 - ry);
+    const y0 = -s * (hp - h * .06), y1 = s * (hp - h * .05), N = 2 + Math.round(sq * 4), up = P.la * s > 0 ? 1 : -1, rnd = rng(seed), lit = R.lit;
+    const ys = []; for (let i = 0; i <= N; i++) ys.push(y0 + (y1 - y0) * (i + (i && i < N ? (rnd() - .5) * .3 : 0)) / N);
+    for (let i = 0; i < N; i++) {
+      const b = 1 + sq * (i & 1 ? .03 : .15 + rnd() * .05), ya = ys[i], yb = ys[i + 1], sh = (rnd() - .5) * sq * w * .06;
+      // each fold is the wall again, pushed out from the axis, cut along the crease lines above and below it
+      g.save(); band(g, ya, yb, hw * b * 1.02, ry * b, s); g.clip(); g.translate(sh, 0); g.scale(b, 1);
+      paintCan(g, L, T, w, h, R, sc, u0, 0); g.restore();
+      // its upper facet turns toward the lamp, the lower one away
+      const gr = g.createLinearGradient(0, ya, 0, yb), lo = `rgba(8,6,5,${(.42 * sq).toFixed(3)})`, hi = `rgba(255,244,226,${(.2 * sq * lit).toFixed(3)})`;
+      gr.addColorStop(0, up > 0 ? hi : lo); gr.addColorStop(.42, 'rgba(128,120,110,0)'); gr.addColorStop(.58, 'rgba(128,120,110,0)'); gr.addColorStop(1, up > 0 ? lo : hi);
+      g.save(); g.translate(sh, 0); band(g, ya, yb, hw * b, ry * b, s); g.fillStyle = gr; g.fill(); g.restore();
+      // creases in the print where the tin kinked
+      g.lineCap = 'round';
+      for (let k = 0; k < 5; k++) {
+        const x = (rnd() * 1.6 - .8) * hw, yy = ya + (yb - ya) * (.2 + rnd() * .6), dx = (rnd() - .5) * hw * .5, dy = (yb - ya) * (rnd() - .5) * .6, lw = Math.max(.6 / sc, w * .012);
+        g.lineWidth = lw;
+        g.strokeStyle = `rgba(8,6,5,${(.3 * sq).toFixed(3)})`; g.beginPath(); g.moveTo(x, yy); g.lineTo(x + dx, yy + dy); g.stroke();
+        g.strokeStyle = `rgba(255,248,236,${(.28 * sq * lit).toFixed(3)})`; g.beginPath(); g.moveTo(x, yy - lw); g.lineTo(x + dx, yy + dy - lw); g.stroke();
+      }
+    }
+    for (let i = 1; i < N; i++) {
+      const lw = Math.max(1 / sc, w * .03);
+      arcLine(g, ys[i] + s * lw * .4, hw * (1 + sq * .03), ry, s, lw, `rgba(8,6,5,${(.5 * sq).toFixed(3)})`);
+      arcLine(g, ys[i] - s * lw * .5, hw * (1 + sq * .03), ry, s, lw * .5, `rgba(255,248,236,${(.35 * sq * lit).toFixed(3)})`);
+    }
+  }
+
+  // each copy of a can lies a little turned toward or away from us, so a can on its side shows one end
+  const YAWS = new WeakMap();
+  function yawOf(can, o) {
+    if (typeof o.yaw === 'number' && isFinite(o.yaw)) return clamp(Math.round(o.yaw / YAW), -15, 15);
+    if (!can || typeof can !== 'object') return 0;
+    let y = YAWS.get(can);
+    if (y == null) {
+      const id = can.copy != null ? can.copy | 0 : can.body && can.body.id != null ? can.body.id | 0 : 0, hh = hash(String(can.name) + '#' + id);
+      YAWS.set(can, y = (1 + hh % 4) * (hh & 64 ? 1 : -1));
+    }
+    return y;
+  }
 
   // A can that holds still is painted once into a sprite at its pose and light, then only blitted.
   const SPR = new Map(), SEEN = new WeakMap(), STIERS = [1, 1.5, 2, 3, 4, 6, 8];
   let sprT = -1e9, sprBud = 0;
   function spendSprite() { const t = now(); if (t - sprT > 12) { sprT = t; sprBud = 8; } return sprBud-- > 0; }
-  function sprite(L, T, w, h, q, lq, mir, ts, spinQ) {
-    const key = `${T.key}|${q}|${mir}|${lq}|${ts}|${spinQ}|${h}`;
+  function sprite(L, T, w, h, q, lq, mir, yq, ts, spinQ) {
+    const key = `${T.key}|${q}|${mir}|${yq}|${lq}|${ts}|${spinQ}|${h}`;
     let s = SPR.get(key);
     if (s && s.T === T) { SPR.delete(key); SPR.set(key, s); return s; }
     if (!spendSprite()) return null;
@@ -440,7 +584,7 @@ window.ART = (() => {
     cv.width = SW; cv.height = SH;
     const t = cv.getContext('2d');
     t.setTransform(ts, 0, 0, ts, SW / 2, SH / 2);
-    paintCan(t, L, T, w, h, grads(t, q, lq, mir, w / 2), ts, .5 + spinQ / 128 * Math.PI * w / T.P, 0);
+    paintCan(t, L, T, w, h, grads(t, q, lq, mir, yq, w / 2, h), ts, .5 + spinQ / 128 * Math.PI * w / T.P, 0);
     s = { cv, T, ox: SW / 2 / ts, oy: SH / 2 / ts, sw: SW / ts, sh: SH / ts };
     SPR.delete(key); SPR.set(key, s);
     if (SPR.size > 260) for (const [k, v] of SPR) { if (SPR.size <= 200) break; if (k !== key) { v.cv.width = 0; SPR.delete(k); } }
@@ -449,16 +593,16 @@ window.ART = (() => {
 
   // Draw one tin can centred at (x, y), rotated by ang.
   // o: squash 0..1, shadow, spin 0..1 (0 = name to the front, .5 = back), labelShift (scrolls a big printed
-  // name round the can while it is carried), rim 0..1 (warm rim light), lit 0..1 (how much lamp reaches it).
+  // name round the can while it is carried), rim 0..1 (warm rim light), lit 0..1 (how much lamp reaches it),
+  // yaw (optional, radians: how far the can is turned toward us; each can has its own when left out).
   function drawCan(g, can, x, y, ang, w, h, o) {
     if (!can || !(w > 0 && h > 0)) return;
     o = o || {};
     ang = +ang || 0;
     const sq = clamp(+o.squash || 0, 0, 1), lit = clamp(o.lit == null ? 1 : +o.lit || 0, 0, 1), rim = clamp(+o.rim || 0, 0, 1);
     g.save(); g.translate(x, y);
-    if (o.shadow) dropShadow(g, ang, w * (1 + sq * .55), h * (1 - sq * .72));
+    if (o.shadow) dropShadow(g, ang, w * (1 + sq * .12), h * (1 - sq * .72));
     g.rotate(ang);
-    if (sq) g.scale(1 + sq * .55, 1 - sq * .72);
     const F = frame(g), sc = F.sc, cv = g.canvas;
     if (F.ok && cv && typeof cv.width === 'number') {
       const rad = Math.hypot(w, h) * .62 * sc + 4;
@@ -466,49 +610,37 @@ window.ART = (() => {
     }
     const name = String(can.name == null ? '' : can.name), st = can.label == null || can.lot == null ? canStyle(name) : null;
     const li = ((st ? st.label : can.label | 0) % LABELS.length + LABELS.length) % LABELS.length, L = LABELS[li], lot = st ? st.lot : can.lot;
-    const q = quant(Math.atan2(F.xy, F.xx)), lq = Math.round(lit * 20), mir = F.mir, lh = labelH(w, h);
+    // light is worked out every 2.8 degrees of turn (the drawing itself turns exactly); cans on the move take
+    // the lamp in steps of a tenth, still ones cross-fade between two sprites
+    const q = quant(Math.atan2(F.xy, F.xx)) & ~1, lq = Math.round(lit * 10) * 2, mir = F.mir, lh = labelH(w, h), yq = yawOf(can, o);
     const carry = typeof o.labelShift === 'number' && isFinite(o.labelShift), spin = +o.spin || 0;
     if (!carry && !sq && typeof can === 'object') {
       const ts = STIERS.find(v => v >= sc * .98) || 8;
       const spinQ = ((Math.round((spin - Math.floor(spin)) * 128) % 128) + 128) % 128;
-      const sk = `${q}|${mir}|${ts}|${spinQ}|${w}|${h}`;
+      const sk = `${q}|${mir}|${yq}|${ts}|${spinQ}|${w}|${h}`;
       let seen = SEEN.get(can);
       if (!seen) SEEN.set(can, seen = { k: '', n: 0 });
       if (seen.k === sk) seen.n++; else { seen.k = sk; seen.n = 0; }
-      if (seen.n >= 2) {
+      if (seen.n >= 5) {
         // lamp partly on: cross-fade the unlit sprite into the lit one
         const T = texFor(can, name, li, lot, w, lh, false, sc), ga = alphaOf(g);
-        const a = lit < 1 ? sprite(L, T, w, h, q, 0, mir, ts, spinQ) : null, b = lit > 0 ? sprite(L, T, w, h, q, 20, mir, ts, spinQ) : null;
+        const a = lit < 1 ? sprite(L, T, w, h, q, 0, mir, yq, ts, spinQ) : null, b = lit > 0 ? sprite(L, T, w, h, q, 20, mir, yq, ts, spinQ) : null;
         if ((lit === 1 || a) && (lit === 0 || b)) {
           if (a) g.drawImage(a.cv, -a.ox, -a.oy, a.sw, a.sh);
           if (b) { g.globalAlpha = ga * (a ? lit : 1); g.drawImage(b.cv, -b.ox, -b.oy, b.sw, b.sh); g.globalAlpha = ga; }
-          if (rim > 0) rimLight(g, w, h, grads(g, q, 20, mir, w / 2), sc, rim);
+          if (rim > 0) rimLight(g, w, h, grads(g, q, 20, mir, yq, w / 2, h), sc, rim);
           g.restore(); return;
         }
       }
     }
-    const T = texFor(can, name, li, lot, w, lh, carry, sc), R = grads(g, q, lq, mir, w / 2);
-    const u0 = .5 + spin * Math.PI * w / T.P + (carry ? o.labelShift : 0);
-    if (sq > .12) {
-      // crushed: the wall folds into an accordion, each ring pushed off the one below
-      const hh = h / 2, hw = w / 2, N = 2 + Math.round(sq * 6), bh = h / N, off = sq * w * .03;
-      const ry = Math.max(.01, hw * E * Math.abs(R.cu)), s = R.s, lim = hh - hw * E;
-      for (let i = 0; i < N; i++) {
-        const ya = i ? -hh + i * bh : -h * 2, yb = i === N - 1 ? h * 2 : -hh + (i + 1) * bh + .5 / sc;
-        g.save(); g.beginPath(); g.rect(-w * 2, ya, w * 4, yb - ya); g.clip(); g.translate(i & 1 ? off : -off, 0); paintCan(g, L, T, w, h, R, sc, u0, rim);
-        // alternate pleats face the lamp or turn away from it
-        const y0 = Math.max(ya, -lim), y1 = Math.min(yb, lim);
-        if (y1 > y0) { g.fillStyle = (i & 1) === (s > 0 ? 1 : 0) ? `rgba(0,0,0,${(.2 * sq).toFixed(3)})` : `rgba(255,245,230,${(.1 * sq).toFixed(3)})`; g.fillRect(-hw, y0, w, y1 - y0); }
-        g.restore();
-      }
-      for (let i = 1; i < N; i++) {
-        const yy = -hh + i * bh;
-        g.lineWidth = Math.max(.6 / sc, w * .02); g.strokeStyle = `rgba(255,248,236,${(.5 * sq).toFixed(3)})`;
-        g.beginPath(); g.moveTo(-hw, yy - 1); half(g, yy - 1, hw, ry, s, true); g.stroke();
-        g.lineWidth = Math.max(1.5 / sc, w * .055); g.strokeStyle = `rgba(0,0,0,${(.45 * sq).toFixed(3)})`;
-        g.beginPath(); g.moveTo(-hw, yy + 1.3); half(g, yy + 1.3, hw, ry, s, true); g.stroke();
-      }
-    } else paintCan(g, L, T, w, h, R, sc, u0, rim);
+    const T = texFor(can, name, li, lot, w, lh, carry, sc), u0 = .5 + spin * Math.PI * w / T.P + (carry ? o.labelShift : 0);
+    if (!sq) paintCan(g, L, T, w, h, grads(g, q, lq, mir, yq, w / 2, h), sc, u0, rim);
+    else {
+      const h2 = h * (1 - sq * .72), R = grads(g, q, lq, mir, yq, w / 2, h2);
+      paintCan(g, L, T, w, h2, R, sc, u0, 0);
+      if (sq > .12) crush(g, L, T, w, h2, R, sc, u0, sq, hash(name));
+      if (rim > 0) rimLight(g, w, h2, R, sc, rim);
+    }
     g.restore();
   }
   const drawCanFlat = (g, can, x, y, w, h, o) => drawCan(g, can, x, y, 0, w, h, o);

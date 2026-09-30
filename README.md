@@ -57,4 +57,7 @@ js/animals/*.js   the five animals (kit.js is the shared drawing kit)
 js/roster.js      roster editor
 js/sfx.js         synthesised sound
 tools/animal-smoke.js  smoke test for an animal module
+tools/animals.html     every animal in every pose
+tools/cans.html        can preview
+tools/claw.html        claw close-up preview
 ```
