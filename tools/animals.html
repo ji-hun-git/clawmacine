@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Animal sheet</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Archivo:wdth,wght@62..125,400..900&display=swap">
+<style>
+  body{margin:0;background:#17130f;color:#efe7d2;font:500 14px Archivo,Arial,sans-serif}
+  canvas{display:block;width:1500px;height:auto;max-width:100%}
+  p{margin:10px 16px}
+</style>
+</head>
+<body>
+<p>Every animal in every pose. Columns: run slow, run fast, idle, cheer, worry, ride focus, ride worry, ride cheer, ride sad. <span id="missing"></span></p>
+<canvas id="c" width="1500" height="900"></canvas>
+<script src="../js/art.js"></script>
+<script src="../js/animals/kit.js"></script>
+<script src="../js/animals/redpanda.js"></script>
+<script src="../js/animals/turtle.js"></script>
+<script src="../js/animals/axolotl.js"></script>
+<script src="../js/animals/shark.js"></script>
+<script src="../js/animals/pangolin.js"></script>
+<script>
+  const keys = ['redpanda', 'turtle', 'axolotl', 'shark', 'pangolin'];
+  const cols = [
+    { mode: 'run', speed: .5 }, { mode: 'run', speed: 1.5 }, { mode: 'idle' }, { mode: 'cheer' }, { mode: 'worry' },
+    { mode: 'ride', emotion: 'focus', look: 1 }, { mode: 'ride', emotion: 'worry', look: 1 }, { mode: 'ride', emotion: 'cheer', look: 0 }, { mode: 'ride', emotion: 'sad', look: .5 },
+  ];
+  const cv = document.getElementById('c'), g = cv.getContext('2d'), d = Math.min(2, devicePixelRatio || 1);
+  cv.width = 1500 * d; cv.height = 900 * d;
+  document.getElementById('missing').textContent = keys.filter(k => !ANIMALS[k]).map(k => 'missing: ' + k).join(' ');
+  const bibs = [{ n: 1, bg: '#e2372c', fg: '#fff' }, { n: 2, bg: '#2447b5', fg: '#fff' }, { n: 3, bg: '#f3b21b', fg: '#1c1b1f' }, { n: 4, bg: '#46b089', fg: '#1c1b1f' }, { n: 5, bg: '#1c1b1f', fg: '#fff' }];
+  let t0 = performance.now();
+  function draw(now) {
+    const t = (now - t0) / 1000;
+    g.setTransform(d, 0, 0, d, 0, 0); g.clearRect(0, 0, 1500, 900);
+    keys.forEach((k, r) => {
+      const A = ANIMALS[k], y = 150 + r * 170;
+      g.fillStyle = '#efe7d2'; g.font = '14px Archivo'; g.fillText(A ? `${A.name} · ${A.status}` : k + ' (missing)', 10, y - 128);
+      cols.forEach((c, i) => {
+        const x = 90 + i * 160;
+        if (c.mode === 'ride') {   // a stand-in crane hub
+          g.fillStyle = '#9aa1a8'; g.fillRect(x - 21, y, 42, 20); g.fillStyle = '#5f666d'; g.fillRect(x - 1, y - 140, 2, 140);
+        } else { g.fillStyle = 'rgba(255,255,255,.06)'; g.fillRect(x - 70, y, 140, 2); }
+        if (!A) return;
+        g.save(); g.translate(x, y);
+        try { A.draw(g, { t: t + i * .21, mode: c.mode, speed: c.speed || 1, emotion: c.emotion || 'focus', look: c.look || 0, bib: bibs[r], scale: 1 }); }
+        catch (e) { g.restore(); g.save(); g.fillStyle = 'red'; g.fillText('ERR ' + e.message, x - 60, y - 40); }
+        g.restore();
+      });
+    });
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+</script>
+</body>
+</html>

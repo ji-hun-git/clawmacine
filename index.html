@@ -3,94 +3,102 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>깡통 뽑기 · Tin Can Roulette</title>
-<meta name="description" content="An old tin roulette sets the group order, then a physics claw machine picks one student can from each group. Absent? Pick again.">
+<title>Roll Call Crane</title>
+<meta name="description" content="A wheel or an animal race sets the order of the groups. A crane picks one student's can from each group. If that student is absent, the crane picks again.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Barlow+Condensed:wght@500;600;700&family=Do+Hyeon&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Archivo:wdth,wght@62..125,400..900&display=swap">
 <link rel="stylesheet" href="css/style.css">
 </head>
-<body>
+<body data-act="order" data-mode="wheel">
 
-<header class="top">
-  <div class="logo">
-    <svg class="can-ico" viewBox="0 0 34 44" aria-hidden="true">
-      <rect x="2" y="2" width="30" height="40" rx="3" fill="#d9dcdf" stroke="#1c1b1f" stroke-width="2.5"/>
-      <rect x="2" y="10" width="30" height="24" fill="#e2372c" stroke="#1c1b1f" stroke-width="2"/>
-      <path d="M17 15l2 4.2 4.6.6-3.3 3.2.8 4.6L17 25.4 12.9 27.6l.8-4.6-3.3-3.2 4.6-.6z" fill="#f3b21b" stroke="#1c1b1f" stroke-width="1.2"/>
-    </svg>
-    <div class="kr">깡통 뽑기</div>
-    <div class="en">TIN CAN ROULETTE<small>Order wheel · claw · roll call</small></div>
-  </div>
-  <ol class="steps" id="steps" aria-label="Progress">
-    <li data-step="1"><b>1</b>Roster</li>
-    <li data-step="2"><b>2</b>Spin order</li>
-    <li data-step="3"><b>3</b>Catch cans</li>
-  </ol>
-  <div class="tools">
-    <button class="chip roster" id="openRoster" aria-haspopup="dialog"><span class="n" id="rosterCount">16 · 4</span> Roster</button>
-    <button class="chip" id="hard" aria-pressed="false" title="The claw can slip, like a real arcade">Hard claw</button>
-    <button class="chip" id="sound" aria-pressed="true">Sound</button>
-  </div>
-</header>
-
-<main class="floor">
-  <section class="plate" aria-labelledby="wheelTitle">
-    <h2 id="wheelTitle">Order Wheel<small>Flick the wheel or press spin</small></h2>
-    <canvas id="wheel" width="330" height="330" aria-label="Tin roulette wheel. The ball decides which group plays next."></canvas>
-    <ul class="legend" id="legend"></ul>
-    <button class="bigbtn" id="spin">SPIN<kbd>SPACE</kbd></button>
+<div class="stage" id="stage" tabindex="-1">
+  <section class="act-order" aria-label="Order">
+    <div class="modes" role="radiogroup" aria-label="How the order is set">
+      <button role="radio" id="modeWheel" aria-checked="true">Wheel</button>
+      <button role="radio" id="modeRace" aria-checked="false">Race</button>
+    </div>
+    <div class="wheelbox"><canvas id="wheel" width="330" height="330" aria-label="Order wheel. The pocket the ball lands in sets the next group."></canvas></div>
+    <div class="racebox"><canvas id="race" width="960" height="440" aria-label="Animal race. The finishing order sets the order of the groups."></canvas></div>
+    <button class="go" id="spin"><span id="spinLabel">Spin</span> <kbd>Space</kbd></button>
   </section>
 
-  <section class="cabinet" aria-label="Claw machine">
+  <section class="cabinet" aria-label="Crane">
     <div class="marquee">
       <div class="bulbs" aria-hidden="true"></div>
-      <div class="kr">깡통 뽑기</div>
-      <div class="en">★ ONE CAN PER GROUP ★</div>
+      <div class="sign" id="sign">ROLL CALL CRANE</div>
+      <div class="signsub" id="signsub">One pick per group</div>
       <div class="bulbs" aria-hidden="true"></div>
     </div>
     <div class="glass">
-      <canvas id="machine" width="460" height="580" aria-label="Claw machine window filled with name cans"></canvas>
-      <div class="banner" id="banner" aria-hidden="true"></div>
-      <div class="reveal" id="reveal" hidden>
-        <div class="card" id="card" role="dialog" aria-labelledby="rvName">
-          <canvas id="portrait" width="150" height="170" aria-hidden="true"></canvas>
-          <div class="rv-group" id="rvGroup"></div>
-          <div class="rv-name" id="rvName"></div>
-          <div class="rv-btns">
-            <button id="here">HERE<small>출석 · H</small></button>
-            <button id="absent">ABSENT<small>결석 · X</small></button>
-          </div>
-          <div class="stamp" id="stamp"></div>
-        </div>
-      </div>
+      <canvas id="machine" width="460" height="580" aria-label="Crane window with the current group's name cans"></canvas>
+      <div class="count" id="count" aria-hidden="true"></div>
     </div>
-    <div class="deck">
-      <div class="joy" id="joy" role="slider" aria-label="Claw position" aria-valuemin="-1" aria-valuemax="1" aria-valuenow="0" tabindex="0">
-        <div class="joy-base"></div>
-        <div class="joy-stick" id="joyStick"><div class="joy-ball"></div></div>
-      </div>
-      <div class="counter" aria-live="polite">
-        <canvas id="flip" width="58" height="44" aria-hidden="true"></canvas>
-        <div><div class="msg" id="msg">LOADING…</div><div class="sub" id="sub"></div></div>
-      </div>
-      <button class="grab" id="grab">GRAB</button>
-      <div class="deck-aux">
-        <span>Drag the stick or ← → · Space grabs</span>
-        <button class="mini" id="auto">Auto-aim</button>
-      </div>
+    <div class="base">
+      <div class="slot" aria-hidden="true"><i></i></div>
+      <button class="start" id="start" aria-label="Start the crane now">START</button>
+      <div class="plate-note" aria-hidden="true">Crane picks at random. Every name has the same odds.</div>
     </div>
   </section>
 
-  <section class="plate" aria-labelledby="ticketTitle">
-    <h2 id="ticketTitle">Prize Tickets<small id="ticketSub">Order and picks</small></h2>
-    <ol class="tickets" id="tickets"></ol>
-    <div class="endrow" id="endRow" hidden>
-      <button class="btn go" id="again">Rematch</button>
-      <button class="btn" id="copy">Copy results</button>
-    </div>
+  <section class="list" aria-label="Order and picks">
+    <h2 id="listHead">Order</h2>
+    <ol class="rows" id="rows"></ol>
+    <p class="pool" id="pool"></p>
   </section>
-</main>
+
+  <div class="caption" aria-live="polite"><b id="msg">POWER ON</b><span id="sub"></span></div>
+
+  <div class="board" id="board" hidden>
+    <h2>Roll call <span id="boardDate"></span></h2>
+    <ol class="rows big" id="boardRows"></ol>
+    <div class="board-actions">
+      <button class="go" id="copy">Copy list</button>
+      <button class="go ghost" id="again">Run again</button>
+    </div>
+  </div>
+</div>
+
+<div class="house" id="house" aria-hidden="true"></div>
+<div class="bars" aria-hidden="true"><i></i><i></i></div>
+
+<div class="reveal" id="reveal" hidden role="dialog" aria-labelledby="rvFirst">
+  <canvas id="portrait" width="520" height="560" aria-hidden="true"></canvas>
+  <div class="rv-text">
+    <div class="rv-group" id="rvGroup"></div>
+    <div class="rv-name"><span id="rvFirst"></span><span id="rvLast"></span></div>
+    <div class="rv-next" id="rvNext"></div>
+  </div>
+  <div class="stamp" id="stamp"></div>
+  <div class="rv-keys" id="rvKeys">
+    <button id="here">Present <kbd>P</kbd></button>
+    <button id="absent">Absent <kbd>A</kbd></button>
+    <button id="undo" hidden>Undo <kbd>Z</kbd></button>
+  </div>
+</div>
+
+<nav class="teacher" aria-label="Teacher controls">
+  <button id="openRoster">Roster <span id="rosterCount"></span></button>
+  <button id="hard" aria-pressed="false" title="Cans can slip out of the claw. The crane then goes again.">Weak grip: off</button>
+  <button id="sound" aria-pressed="true">Sound: on</button>
+  <button id="full">Full screen <kbd>F</kbd></button>
+  <button id="keysBtn">Keys <kbd>?</kbd></button>
+</nav>
+
+<div class="keys" id="keys" hidden>
+  <div class="keys-sheet" role="dialog" aria-label="Keys">
+    <dl>
+      <dt>Space</dt><dd>Spin the wheel, start the race, start the crane now, next group</dd>
+      <dt>P</dt><dd>Present</dd>
+      <dt>A</dt><dd>Absent. The crane picks again.</dd>
+      <dt>Z</dt><dd>Undo the last mark</dd>
+      <dt>F</dt><dd>Full screen</dd>
+      <dt>M</dt><dd>Sound on or off</dd>
+      <dt>R</dt><dd>Roster</dd>
+    </dl>
+    <button class="go" id="keysClose">Close</button>
+  </div>
+</div>
 
 <div class="modal" id="modal" hidden>
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="rosterTitle">
@@ -105,36 +113,41 @@
           <output id="gOut">4 groups</output>
           <button id="gPlus" aria-label="More groups">+</button>
         </div>
-        <button class="btn alt" id="shuffle">Shuffle into groups</button>
+        <button class="btn" id="shuffle">Shuffle names into groups</button>
         <button class="btn" id="togglePaste" aria-expanded="false">Paste a list</button>
       </div>
       <div class="paste" id="paste" hidden>
-        <textarea id="pasteText" spellcheck="false" placeholder="One name per line.&#10;Lines like “Group 1” or “1조” start a new group."></textarea>
+        <textarea id="pasteText" spellcheck="false" placeholder="One name per line.&#10;A line like “Group 2” starts a new group."></textarea>
         <div class="bar">
           <button class="btn go" id="pasteReplace">Replace roster</button>
           <button class="btn" id="pasteAdd">Add to roster</button>
         </div>
       </div>
-      <p class="hint"><b>Tap</b> a name to mark it absent today (no can). <b>Drag</b> a name to move it to another group.</p>
+      <p class="hint">Tap a name: absent today, no cans. Drag a name: move it to another group. Each group races as its animal.</p>
       <div class="gcols" id="gcols"></div>
       <p class="err" id="rErr" hidden></p>
     </div>
     <div class="sheet-foot">
-      <button class="btn" id="rDefault">Reset to class list</button>
+      <button class="btn" id="rDefault">Restore class list</button>
       <div class="right">
         <button class="btn" id="rCancel">Cancel</button>
-        <button class="btn go" id="rSave">Save &amp; restart</button>
+        <button class="btn go" id="rSave">Save and start over</button>
       </div>
     </div>
   </div>
 </div>
 
-<canvas id="fx" aria-hidden="true"></canvas>
-
 <script src="lib/matter.min.js"></script>
 <script src="js/sfx.js"></script>
 <script src="js/art.js"></script>
+<script src="js/animals/kit.js"></script>
+<script src="js/animals/redpanda.js"></script>
+<script src="js/animals/turtle.js"></script>
+<script src="js/animals/axolotl.js"></script>
+<script src="js/animals/shark.js"></script>
+<script src="js/animals/pangolin.js"></script>
 <script src="js/roulette.js"></script>
+<script src="js/race.js"></script>
 <script src="js/machine.js"></script>
 <script src="js/roster.js"></script>
 <script src="js/game.js"></script>

@@ -1,44 +1,60 @@
-# 깡통 뽑기 · Tin Can Roulette
+# Roll Call Crane
 
-A classroom picker built like an old tin toy. A tin roulette decides the order of the groups. Then a claw machine full of name cans picks one student from each group. If the picked student is absent, the claw gets another try.
+A classroom picker for a projector. First the order of the groups is set, by an old roulette wheel or by a race of endangered animals. Then a crane picks one student's can from each group. The teacher marks the student present or absent. If the student is absent, their cans leave the machine and the crane picks again.
 
-## How a game goes
+Live: https://ji-hun-git.github.io/clawmacine/
 
-1. **Roster.** Add names, set the number of groups (2–8), paste a list, shuffle names into groups, or drag names between groups. Tap a name to mark that student away today, and they get no can.
-2. **Spin order.** Flick the wheel or press **Spin**. A steel ball rides the track, bounces off the diamonds and rattles into a pocket. Each pocket is printed with a group number, and that group goes next. The last group left goes last automatically.
-3. **Catch cans.** Each group's cans pour into the machine. Steer the claw and press **GRAB**, or use **Auto-aim**. When a can drops into the prize chute, mark the student **HERE** or **ABSENT**. An absent student's can is crushed and the claw gets one more chance with the cans that are left.
+## A round
 
-The prize tickets on the right record the order, each pick, and who was absent. **Copy results** puts them on the clipboard.
+1. **Roster.** Add names, set the number of groups (up to 8), paste a list (a line such as `Group 2` starts a new group), shuffle names into groups, or drag a name to another group. Tap a name to mark it absent before the game starts. Each group picks its animal here.
+2. **Order.** Choose **Wheel** or **Race** on the left.
+   - **Wheel:** a steel ball rides the track, drops past the diamonds and rattles into a pocket. The pocket's number is the next group.
+   - **Race:** the groups' animals run one lane each. The finishing order is the group order.
+3. **Crane.** The group's animal rides the crane. After a short countdown the crane moves on its own, stops over one can, and drops. Nobody steers it.
+4. **Roll call.** The name takes the whole screen. Press **P** for present or **A** for absent. **Z** undoes the last mark.
 
-## Controls
+## Keys
 
-| | Keyboard | Pointer / touch |
+| Key | What it does |
+|---|---|
+| Space | Spin the wheel, start the race, start the crane now, go to the next group |
+| P / A | Present / absent |
+| Z | Undo the last mark |
+| F | Full screen |
+| M | Sound on or off |
+| R | Roster (before the order is set) |
+| ? | Show the keys |
+
+## The animals
+
+| Animal | IUCN status | How it runs |
 |---|---|---|
-| Spin the wheel | Space | Drag and flick the wheel, or press Spin |
-| Move the claw | ← → or A D | Drag the joystick |
-| Grab | Space, ↓ or Enter | GRAB button |
-| Roll call | H = here, X = absent | Buttons on the card |
+| Great hammerhead shark | Critically Endangered | Flops. It still finishes. |
+| Hawksbill sea turtle | Critically Endangered | Both front flippers at once, slow and steady |
+| Axolotl | Critically Endangered | A wiggling sprawl walk, gills streaming |
+| Red panda | Endangered | Bounds, tail streaming |
+| Sunda pangolin | Critically Endangered | On its hind legs, like real pangolins; curls into a ball at speed |
 
-**Hard claw** makes the grip weaker, so cans can slip on the way up, like a real arcade.
+## Fair by construction
 
-## Physics
-
-- **Cans** are [Matter.js](https://brm.io/matter-js/) rigid bodies. They stack in a pyramid, topple, and ring when they collide.
-- **The claw** hangs on a cable as a driven pendulum with a changing length. It swings when the gantry speeds up or brakes, and paying out cable bleeds the swing off. The prongs are kinematic bodies that push cans aside. A grabbed can hangs on a soft spring.
-- **The roulette** uses polar-coordinate ball physics with sub-steps: track friction, a fall below the critical speed, diamond deflectors, and fret bounces in the pockets. In 800 simulated spins with 4 groups, the results were 190 / 218 / 203 / 189, so the order is fair.
+- **Wheel:** the result comes from the ball physics. In 800 simulated spins with 4 groups, every group came up about equally often.
+- **Race:** the finishing order is drawn uniformly at random before the start. The animals' speed curves are then shaped to arrive in that order, with lead changes and sometimes a photo finish. Re-rolling the curves never changes the order, so no animal is favoured.
+- **Crane:** the crane first draws a student uniformly from the names still in the machine, then aims at that student's most reachable can. Every student has the same number of cans. Physics decides whether the grab holds. The claw may knock a neighbouring can loose, and whatever falls into the chute is the pick.
 
 ## Run it
 
-Open `index.html` in a browser. It needs no build step and no server, and Matter.js is vendored in `lib/`. Fonts load from Google Fonts and fall back to system fonts offline. The roster is saved in the browser's local storage.
+Open `index.html` in a browser. There is no build step and no server. Matter.js is vendored in `lib/`. Fonts load from Google Fonts and fall back to system fonts offline. The roster and the chosen order mode are saved in the browser.
 
 ```
 index.html
 css/style.css
-js/sfx.js       synthesised sounds (Web Audio)
-js/art.js       palette and tin-can drawing
-js/roulette.js  tin roulette and ball physics
-js/machine.js   claw machine (Matter.js)
-js/roster.js    roster editor
-js/game.js      game flow
-lib/matter.min.js
+js/game.js        director: acts, lighting, reveal, keys, undo
+js/roulette.js    the wheel and its ball physics
+js/race.js        the animal race
+js/machine.js     the crane (Matter.js cans, pendulum claw, camera)
+js/art.js         palette and the lit tin can
+js/animals/*.js   the five animals (kit.js is the shared drawing kit)
+js/roster.js      roster editor
+js/sfx.js         synthesised sound
+tools/animal-smoke.js  smoke test for an animal module
 ```

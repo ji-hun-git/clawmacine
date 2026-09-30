@@ -1,6 +1,7 @@
-// Roster: who is in which group, and who is away today. Saved in this browser only.
+// Roster: who is in which group, which animal runs for the group, and who is absent today.
+// Saved in this browser only.
 window.Roster = (() => {
-  const KEY = 'tin-can-roulette-roster-v1';
+  const KEY = 'tin-can-roulette-roster-v1';   // old product name, kept so saved rosters survive the rename
   const CLASS_LIST = [
     ['Group 1', ['Minjun Kim', 'Sojeong Lee', 'Hojae Lee', 'Martin Vladimirov Karastoyanov']],
     ['Group 2', ['JeongSeop Park', 'Fengjian Jiang', 'Helen Ha', 'JIYOUNG LIM']],
@@ -8,109 +9,262 @@ window.Roster = (() => {
     ['Group 4', ['Jun Wang', 'Valeriia Lvova', 'Minhyeok Seo', 'Hoyeol Sohn']],
   ];
   const MAX_GROUPS = 8;
-  const fresh = () => ({ groups: CLASS_LIST.map(([name, m]) => ({ name, members: m.map(n => ({ name: n, away: false })) })) });
+  const ANIMAL_KEYS = ['redpanda', 'turtle', 'axolotl', 'shark', 'pangolin'];
+  const COMMON = { redpanda: 'Red panda', turtle: 'Sea turtle', axolotl: 'Axolotl', shark: 'Hammerhead', pangolin: 'Pangolin' };
+  const art = k => (window.ANIMALS || {})[k];
+  const animalName = k => (art(k) && art(k).name) || COMMON[k] || String(k);
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+
+  const fresh = () => ({ groups: CLASS_LIST.map(([name, m], i) => ({ name, animal: ANIMAL_KEYS[i % ANIMAL_KEYS.length], members: m.map(n => ({ name: n, away: false })) })) });
   const copy = r => JSON.parse(JSON.stringify(r));
-  const clean = s => s.replace(/^\s*(?:[-*•·]|\d+[.)])\s+/, '').replace(/\s+/g, ' ').trim();
-  const isHeader = s => /^(?:group|team|grp)\b/i.test(s) || /^\d+\s*(?:조|팀|반)\s*:?$/.test(s) || /^(?:조|팀)\s*\d+/.test(s);
+  const clean = s => String(s).replace(/^\s*(?:[-*•·–]|\d+[.)])\s+/, '').replace(/[,;]+\s*$/, '').replace(/\s+/g, ' ').trim();
+  const nameOf = s => { const n = clean(s).slice(0, 40); return /\p{L}/u.test(n) ? n : ''; };
+
+  // "Group 2", "Team Red", "Group 2: Jun Wang". Korean class-list headers ("2조", "조 2") still parse and become "Group 2".
+  const HEAD = /^((?:group|team|grp)(?![a-z])[^:：]*?|\d+\s*(?:조|팀|반)|(?:조|팀)\s*\d+)\s*(?:[:：]\s*(.*))?$/i;
+  function header(s) {
+    const m = HEAD.exec(clean(s)); if (!m) return null;
+    const ko = /[조팀반]/.test(m[1]) && /\d+/.exec(m[1]);
+    return { name: (ko ? `Group ${+ko[0]}` : m[1].trim()).slice(0, 24), rest: (m[2] || '').trim() };
+  }
+  const gname = c => { if (/^\d{1,2}$/.test(c)) return `Group ${+c}`; const h = header(c); return h && !h.rest ? h.name : ''; };
 
   function valid(v) {
     return v && Array.isArray(v.groups) && v.groups.length > 0 &&
       v.groups.every(g => typeof g.name === 'string' && Array.isArray(g.members) && g.members.every(m => typeof m.name === 'string'));
   }
+  // every group gets an animal; missing or unknown ones take the first free animal, starting from the group's own index
+  function free(used, i) {
+    for (let k = 0; k < ANIMAL_KEYS.length; k++) { const a = ANIMAL_KEYS[(i + k) % ANIMAL_KEYS.length]; if (!used.has(a)) return a; }
+    return ANIMAL_KEYS[i % ANIMAL_KEYS.length];
+  }
+  function normalize(r) {
+    const used = new Set(r.groups.map(g => g.animal).filter(a => ANIMAL_KEYS.includes(a)));
+    r.groups = r.groups.map((g, i) => {
+      let a = g.animal;
+      if (!ANIMAL_KEYS.includes(a)) { a = free(used, i); used.add(a); }
+      return { name: String(g.name == null ? `Group ${i + 1}` : g.name), animal: a, members: (g.members || []).map(m => ({ name: String(m.name), away: !!m.away })) };
+    });
+    return r;
+  }
   function load() {
-    try { const v = JSON.parse(localStorage.getItem(KEY)); if (valid(v)) return v; } catch (e) {}
+    try { const v = JSON.parse(localStorage.getItem(KEY)); if (valid(v)) return normalize(v); } catch (e) {}
     return fresh();
   }
   function save(r) { try { localStorage.setItem(KEY, JSON.stringify(r)); } catch (e) {} }
 
-  // "Group 1 / name / name / Group 2 / ..." or a plain list of names
-  function parse(text) {
-    const lines = text.split(/\r?\n|,(?=\s*\S)/).map(s => s.trim()).filter(Boolean);
-    const groups = []; let cur = null, headed = false; const loose = [];
-    for (const raw of lines) {
-      const line = raw.replace(/[:：]\s*$/, '');
-      if (isHeader(line)) { headed = true; cur = { name: clean(line).slice(0, 24), members: [] }; groups.push(cur); continue; }
-      const n = clean(raw).slice(0, 40);
-      if (!n) continue;
-      (cur ? cur.members : loose).push({ name: n, away: false });
+  // A spreadsheet paste (tabs) is read as a table first: group names across the top row, or one name and one group per row.
+  function table(rows) {
+    const top = rows[0].filter(Boolean);
+    if (top.length > 1 && top.every(gname)) {
+      const cols = rows[0].map(c => c ? { name: gname(c), members: [] } : null);
+      rows.slice(1).forEach(r => r.forEach((c, i) => { const n = nameOf(c); if (n && cols[i]) cols[i].members.push({ name: n, away: false }); }));
+      return { headed: true, groups: cols.filter(Boolean), names: [] };
     }
-    if (loose.length && headed) groups.unshift({ name: 'Group 0', members: loose });
-    return { headed, groups, names: loose };
+    const body = rows.filter(r => !r.every(c => !c || /^(?:names?|students?|groups?|teams?|이름|조|팀)$/i.test(c)));
+    const pairs = body.map(r => {
+      const c = r.filter(Boolean); if (c.length !== 2) return null;
+      const a = gname(c[0]), b = gname(c[1]);
+      return a && !b ? [a, c[1]] : b && !a ? [b, c[0]] : null;
+    });
+    if (!pairs.length || pairs.some(p => !p)) return null;
+    const by = new Map();
+    pairs.forEach(([g, s]) => {
+      const n = nameOf(s); if (!n) return;
+      if (!by.has(g)) by.set(g, { name: g, members: [] });
+      by.get(g).members.push({ name: n, away: false });
+    });
+    return { headed: true, groups: [...by.values()].sort((x, y) => x.name.localeCompare(y.name, undefined, { numeric: true })), names: [] };
+  }
+  // "Group 1 / name / name / Group 2 / ..." or a plain list of names (one per line, or separated by commas)
+  function parse(text) {
+    const rows = String(text || '').split(/\r?\n/).map(r => r.split('\t').map(c => c.trim())).filter(r => r.some(Boolean));
+    const t = rows.some(r => r.filter(Boolean).length > 1) && table(rows);
+    if (t) return t;
+    const groups = [], loose = []; let cur = null;
+    const add = s => { const n = nameOf(s); if (n) (cur ? cur.members : loose).push({ name: n, away: false }); };
+    rows.forEach(r => r.forEach(cell => cell.split(/[,;](?=\s*\S)/).forEach(part => {
+      const h = header(part);
+      if (!h) return add(part);
+      cur = { name: h.name, members: [] }; groups.push(cur);
+      if (h.rest) add(h.rest);
+    })));
+    if (loose.length && groups.length) groups.unshift({ name: 'Ungrouped', members: loose.slice() });
+    return { headed: groups.length > 0, groups, names: loose };
   }
   const present = r => r.groups.reduce((s, g) => s + g.members.filter(m => !m.away).length, 0);
   const total = r => r.groups.reduce((s, g) => s + g.members.length, 0);
 
   // ---------- editor sheet ----------
   const $ = s => document.querySelector(s);
-  let draft = null, onSave = null, onClose = null, opener = null;
+  const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const now = () => performance.now() / 1000;
+  const PREV_H = 110, THUMB_H = 34, REST = 1.3, CHEER = 1.4;
+  let draft = null, base = '', onSave = null, onClose = null, opts = {};
+  let live = [], raf = 0, hot = null, armT = 0;
+  const state = new WeakMap(), broken = new Set();
+  const st = g => { let s = state.get(g); if (!s) state.set(g, s = { cheer: 0 }); return s; };
+  const dirty = () => !!draft && JSON.stringify(draft) !== base;
 
-  function smallest() { return draft.groups.reduce((b, g, i) => g.members.length < draft.groups[b].members.length ? i : b, 0); }
+  function note(msg) { const e = $('#rErr'); e.textContent = msg; e.hidden = !msg; }
+  const here = g => g.members.filter(m => !m.away).length;
+  function smallest() { return draft.groups.reduce((b, g, i) => here(g) < here(draft.groups[b]) ? i : b, 0); }
+  function dedupe(groups, have) {
+    let n = 0;
+    groups.forEach(g => { g.members = g.members.filter(m => { const k = m.name.toLowerCase(); if (have.has(k)) { n++; return false; } have.add(k); return true; }); });
+    return n;
+  }
+  const skippedNote = n => n ? `Skipped ${plural(n, 'name')} that ${n === 1 ? 'was' : 'were'} already listed.` : '';
+  const listed = () => new Set(draft.groups.flatMap(g => g.members.map(m => m.name.toLowerCase())));
+
   function setCount(n) {
     n = Math.max(1, Math.min(MAX_GROUPS, n));
-    while (draft.groups.length < n) draft.groups.push({ name: `Group ${draft.groups.length + 1}`, members: [] });
-    while (draft.groups.length > n) {
-      const gone = draft.groups.pop();
-      gone.members.forEach(m => draft.groups[smallest()].members.push(m));
-    }
+    while (draft.groups.length < n) { draft.groups.push({ name: `Group ${draft.groups.length + 1}`, animal: null, members: [] }); normalize(draft); }
+    while (draft.groups.length > n) draft.groups.pop().members.forEach(m => draft.groups[smallest()].members.push(m));
     render();
   }
   function shuffleInto() {
-    const all = draft.groups.flatMap(g => g.members).sort(() => Math.random() - .5);
+    const all = draft.groups.flatMap(g => g.members);
+    for (let i = all.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [all[i], all[j]] = [all[j], all[i]]; }
     draft.groups.forEach(g => g.members = []);
-    all.forEach((m, i) => draft.groups[i % draft.groups.length].members.push(m));
+    // deal the students who are here first, so no group ends up with only absent names
+    [...all.filter(m => !m.away), ...all.filter(m => m.away)].forEach((m, i) => draft.groups[i % draft.groups.length].members.push(m));
     render();
   }
   function addNames(gi, text) {
-    const names = text.split(/[,\n]/).map(clean).filter(Boolean);
-    const have = new Set(draft.groups.flatMap(g => g.members.map(m => m.name.toLowerCase())));
-    names.forEach(n => { if (!have.has(n.toLowerCase())) { draft.groups[gi].members.push({ name: n.slice(0, 40), away: false }); have.add(n.toLowerCase()); } });
-    render();
+    const got = [{ members: text.split(/[,;\n\t]/).map(nameOf).filter(Boolean).map(n => ({ name: n, away: false })) }];
+    const skipped = dedupe(got, listed());
+    draft.groups[gi].members.push(...got[0].members);
+    render(`add${gi}`); note(skippedNote(skipped));
+  }
+  // picking an animal another group has swaps the two, so up to five groups always run five different animals
+  function choose(gi, key) {
+    const g = draft.groups[gi]; if (!g) return;
+    if (g.animal !== key) {
+      const other = draft.groups.length <= ANIMAL_KEYS.length && draft.groups.find((x, j) => j !== gi && x.animal === key);
+      if (other) { other.animal = g.animal; st(other).cheer = now() + CHEER; }
+      g.animal = key; st(g).cheer = now() + CHEER;
+    }
+    render(`a${gi}-${key}`);
   }
 
-  function render(focusAdd) {
-    const box = $('#gcols'); box.innerHTML = '';
-    draft.groups.forEach((g, gi) => {
-      const col = document.createElement('div'); col.className = 'gcol'; col.dataset.gi = gi;
-      const head = document.createElement('div'); head.className = 'ghead';
-      const sw = document.createElement('span'); sw.className = 'num'; sw.textContent = gi + 1;
-      const sty = ART.GROUP[gi % ART.GROUP.length]; sw.style.background = sty.bg; sw.style.color = sty.fg;
-      const nm = document.createElement('input'); nm.value = g.name; nm.maxLength = 24; nm.id = `gname${gi}`; nm.setAttribute('aria-label', `Name of group ${gi + 1}`);
-      nm.addEventListener('input', () => { g.name = nm.value; });
-      const ct = document.createElement('span'); ct.className = 'ct';
-      const away = g.members.filter(m => m.away).length;
-      ct.textContent = `${g.members.length - away}${away ? ` +${away} away` : ''}`;
-      head.append(sw, nm, ct);
-      const names = document.createElement('div'); names.className = 'names';
-      g.members.forEach((m, mi) => names.append(chip(m, gi, mi)));
-      const add = document.createElement('form'); add.className = 'add';
-      add.innerHTML = `<input id="add${gi}" placeholder="Add a name" aria-label="Add a name to ${g.name}" autocomplete="off"><button aria-label="Add">+</button>`;
-      add.addEventListener('submit', e => { e.preventDefault(); const inp = add.querySelector('input'); if (inp.value.trim()) addNames(gi, inp.value); render(gi); });
-      col.append(head, names, add);
-      box.append(col);
-    });
-    if (focusAdd != null) { const el = document.getElementById(`add${focusAdd}`); if (el) el.focus(); }
-    const n = draft.groups.length;
-    $('#gOut').textContent = `${n} group${n === 1 ? '' : 's'}`;
+  // ---------- animal previews: one warm lamp up and to the left, the animal standing in its pool ----------
+  function stage(cv, key, o) {
+    const w = cv.clientWidth, h = cv.clientHeight; if (!w || !h) return;
+    const d = Math.min(2, window.devicePixelRatio || 1), W = Math.round(w * d), H = Math.round(h * d);
+    if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+    const g = cv.getContext('2d');
+    g.setTransform(d, 0, 0, d, 0, 0); g.clearRect(0, 0, w, h);
+    const fx = w * .5, fy = h - Math.max(5, h * .11), r = Math.min(w * .5, h * 1.5);
+    g.save(); g.translate(fx - w * .06, fy); g.scale(1, .2);
+    const pool = g.createRadialGradient(0, 0, 0, 0, 0, r);
+    pool.addColorStop(0, 'rgba(255,222,165,.8)'); pool.addColorStop(.55, 'rgba(255,233,196,.3)'); pool.addColorStop(1, 'rgba(255,233,196,0)');
+    g.fillStyle = pool; g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.fill();
+    g.restore();
+    const A = art(key); if (!A || broken.has(key)) return;
+    g.save(); g.translate(fx, fy);
+    try { A.draw(g, Object.assign(o, { scale: Math.min(fy * .84 / 100, w * .88 / 160) })); }
+    catch (e) { broken.add(key); console.error(`Roster: the ${key} preview failed to draw`, e); }
+    g.restore();
+  }
+  function tick() {
+    raf = requestAnimationFrame(tick);
+    const t = now();
+    for (const v of live) {
+      const w = v.cv.clientWidth, on = !v.btn || v.btn === hot || v.btn === document.activeElement;
+      if (v.btn && !on && !v.on && v.w === w) continue;   // a still thumbnail that is already drawn
+      v.on = on && !!v.btn; v.w = w;
+      stage(v.cv, v.key, v.o(on ? t : REST));
+    }
+  }
+
+  function render(focusKey) {
+    const box = $('#gcols'); box.innerHTML = ''; live = [];
+    const inks = (window.ART && ART.GROUP) || [{ bg: '#1c1b1f', fg: '#fbf8f1' }];
+    draft.groups.forEach((g, gi) => box.append(column(g, gi, inks)));
+    const n = draft.groups.length, p = present(draft), t = total(draft);
+    $('#gOut').textContent = plural(n, 'group');
     $('#gMinus').disabled = n <= 1; $('#gPlus').disabled = n >= MAX_GROUPS;
-    const p = present(draft), t = total(draft);
-    $('#rCount').textContent = `${p} here${t - p ? ` · ${t - p} away` : ''} · ${n} groups`;
-    $('#rErr').hidden = true;
+    $('#rCount').textContent = `${p} here${t - p ? ` · ${t - p} absent` : ''} · ${plural(n, 'group')}`;
+    note('');
+    foot();
+    if (focusKey) { const f = box.querySelector(`[data-k="${focusKey}"]`); if (f) f.focus(); }
+  }
+
+  function column(g, gi, inks) {
+    const ink = inks[gi % inks.length], h = here(g), away = g.members.length - h;
+    const col = mk('div', 'gcol'); col.dataset.gi = gi;
+    col.style.setProperty('--g', ink.bg); col.style.setProperty('--gfg', ink.fg);
+    const head = mk('div', 'ghead');
+    const bar = mk('i', 'gbar'); bar.setAttribute('aria-hidden', 'true');
+    const nm = mk('input'); nm.value = g.name; nm.maxLength = 24; nm.id = `gname${gi}`; nm.autocomplete = 'off'; nm.spellcheck = false;
+    nm.setAttribute('aria-label', `Name of group ${gi + 1}`);
+    nm.addEventListener('input', () => { g.name = nm.value; foot(); });
+    head.append(bar, nm, mk('span', 'ct', away ? `${h} here · ${away} absent` : plural(h, 'name')));
+    const names = mk('div', 'names');
+    g.members.forEach((m, mi) => names.append(chip(m, gi, mi)));
+    const add = mk('form', 'add');
+    const inp = mk('input'); inp.id = `add${gi}`; inp.dataset.k = `add${gi}`; inp.placeholder = 'Add a name'; inp.autocomplete = 'off';
+    inp.setAttribute('aria-label', `Add a name to group ${gi + 1}`);
+    const btn = mk('button', '', 'Add'); btn.type = 'submit';
+    add.append(inp, btn);
+    add.addEventListener('submit', e => { e.preventDefault(); if (inp.value.trim()) addNames(gi, inp.value); });
+    col.append(head, animals(g, gi, inks, h), names, add);
+    return col;
+  }
+
+  function animals(g, gi, inks, h) {
+    const ink = inks[gi % inks.length], box = mk('div', 'apick'), A = art(g.animal);
+    if (A) {
+      const cv = mk('canvas', 'aprev'); cv.style.width = '100%'; cv.style.height = `${PREV_H}px`; cv.setAttribute('aria-hidden', 'true');
+      box.append(cv);
+      const bib = { n: String(gi + 1), bg: ink.bg, fg: ink.fg };
+      // it cheers for a moment when chosen, and worries while nobody in its group is here
+      live.push({ cv, key: g.animal, o: t => ({ t: t + gi * .77, mode: st(g).cheer > t ? 'cheer' : h ? 'idle' : 'worry', speed: 0, emotion: 'focus', look: 0, bib }) });
+    }
+    const cap = mk('div', 'acap');
+    cap.append(mk('b', 'aname', animalName(g.animal)));
+    if (A && A.status) cap.append(mk('span', 'astat', A.status));
+    const row = mk('div', 'aopts'); row.setAttribute('role', 'radiogroup'); row.setAttribute('aria-label', `Animal for group ${gi + 1}`);
+    ANIMAL_KEYS.forEach((k, ki) => {
+      const on = g.animal === k, who = on ? -1 : draft.groups.findIndex((x, j) => j !== gi && x.animal === k);
+      const b = mk('button', 'aopt' + (on ? ' on' : '')); b.type = 'button'; b.dataset.k = `a${gi}-${k}`;
+      b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(on)); b.tabIndex = on ? 0 : -1;
+      const label = who < 0 ? animalName(k) : `${animalName(k)}. ${draft.groups[who].name} has it; choosing it swaps.`;
+      b.setAttribute('aria-label', label); b.title = label;
+      if (art(k)) {
+        const tc = mk('canvas'); tc.style.width = '100%'; tc.style.height = `${THUMB_H}px`; tc.setAttribute('aria-hidden', 'true'); b.append(tc);
+        live.push({ cv: tc, key: k, btn: b, o: t => ({ t, mode: 'idle', speed: 0, emotion: 'focus', look: 0, bib: null }) });
+      } else { b.classList.add('noart'); b.append(mk('span', '', animalName(k))); }
+      if (who >= 0) { const s = mk('small', 'held', String(who + 1)); s.style.setProperty('--h', inks[who % inks.length].bg); b.append(s); }
+      b.addEventListener('click', () => choose(gi, k));
+      b.addEventListener('keydown', e => {
+        const dir = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+        if (dir) { e.preventDefault(); choose(gi, ANIMAL_KEYS[(ki + dir + ANIMAL_KEYS.length) % ANIMAL_KEYS.length]); }
+      });
+      b.addEventListener('pointerenter', () => { hot = b; });
+      b.addEventListener('pointerleave', () => { if (hot === b) hot = null; });
+      row.append(b);
+    });
+    box.append(cap, row);
+    return box;
   }
 
   function chip(m, gi, mi) {
-    const el = document.createElement('div'); el.className = 'nchip' + (m.away ? ' away' : '');
+    const el = mk('div', 'nchip' + (m.away ? ' away' : '')); el.dataset.k = `c${gi}-${mi}`;
     el.tabIndex = 0; el.setAttribute('role', 'button');
-    el.setAttribute('aria-label', `${m.name}${m.away ? ', away today' : ''}. Press to toggle away. Delete removes.`);
-    const t = document.createElement('span'); t.textContent = m.name;
-    const x = document.createElement('button'); x.className = 'x'; x.type = 'button'; x.textContent = '×'; x.setAttribute('aria-label', `Remove ${m.name}`);
-    x.addEventListener('click', e => { e.stopPropagation(); draft.groups[gi].members.splice(mi, 1); render(); });
+    el.setAttribute('aria-label', m.away ? `${m.name}, absent today. Enter marks present. Delete removes.` : `${m.name}. Enter marks absent. Delete removes.`);
+    const members = draft.groups[gi].members;
+    const drop = () => { members.splice(mi, 1); render(members.length ? `c${gi}-${Math.min(mi, members.length - 1)}` : `add${gi}`); };
+    const x = mk('button', 'x', 'remove'); x.type = 'button'; x.tabIndex = -1; x.setAttribute('aria-label', `Remove ${m.name}`);
+    x.addEventListener('click', e => { e.stopPropagation(); drop(); });
     x.addEventListener('pointerdown', e => e.stopPropagation());
-    el.append(t, x);
+    el.append(mk('span', '', m.name), x);
     el.addEventListener('keydown', e => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); m.away = !m.away; render(); }
-      if (e.key === 'Delete' || e.key === 'Backspace') { draft.groups[gi].members.splice(mi, 1); render(); }
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); m.away = !m.away; render(`c${gi}-${mi}`); }
+      if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); drop(); }
     });
-    // tap toggles away; drag moves to another group (works for mouse and touch)
+    // tap marks absent or present; drag moves the name to another group (mouse and touch)
     el.addEventListener('pointerdown', e => {
       if (e.button > 0) return;
       const sx = e.clientX, sy = e.clientY; let ghost = null, over = null;
@@ -120,9 +274,8 @@ window.Roster = (() => {
           ghost = el.cloneNode(true); ghost.classList.add('ghost'); document.body.append(ghost); el.classList.add('lifted');
         }
         if (!ghost) return;
-        ghost.style.left = ev.clientX - 20 + 'px'; ghost.style.top = ev.clientY - 16 + 'px';
-        const hit = document.elementFromPoint(ev.clientX, ev.clientY);
-        const col = hit && hit.closest('.gcol');
+        ghost.style.left = `${ev.clientX - 20}px`; ghost.style.top = `${ev.clientY - 16}px`;
+        const hit = document.elementFromPoint(ev.clientX, ev.clientY), col = hit && hit.closest('.gcol');
         if (over && over !== col) over.classList.remove('over');
         over = col; if (over) over.classList.add('over');
       };
@@ -131,31 +284,72 @@ window.Roster = (() => {
         if (ghost) {
           ghost.remove(); el.classList.remove('lifted'); if (over) over.classList.remove('over');
           const to = over ? +over.dataset.gi : gi;
-          if (to !== gi) { draft.groups[gi].members.splice(mi, 1); draft.groups[to].members.push(m); }
+          if (to !== gi && draft.groups[to]) { members.splice(mi, 1); draft.groups[to].members.push(m); }
           render();
-        } else { m.away = !m.away; render(); }
+        } else { m.away = !m.away; render(`c${gi}-${mi}`); }
       };
       el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
     });
     return el;
   }
 
+  function foot() {
+    const b = $('#rSave'); if (!b || !draft) return;
+    b.disabled = !dirty();
+    if (!opts.midGame) { b.textContent = 'Save'; return; }
+    b.textContent = 'Save and start over';
+    const n = opts.picked | 0;
+    if (n > 0) b.append(mk('small', '', `Loses ${plural(n, 'pick')}`));
+  }
   function validate() {
     draft.groups.forEach((g, i) => { g.name = g.name.trim() || `Group ${i + 1}`; });
-    if (draft.groups.length < 2) return 'Make at least 2 groups.';
-    const empty = draft.groups.filter(g => !g.members.some(m => !m.away));
-    if (empty.length) return `${empty.map(g => g.name).join(', ')} ${empty.length === 1 ? 'has' : 'have'} nobody here. Add a name or use fewer groups.`;
-    return '';
+    if (draft.groups.length < 2) return { msg: 'The order needs at least 2 groups.', focus: 'gPlus' };
+    const empty = draft.groups.filter(g => !here(g));
+    if (empty.length) return {
+      msg: `${empty.map(g => g.name).join(', ')} ${empty.length === 1 ? 'has' : 'have'} nobody here. Add a name or use fewer groups.`,
+      focus: `add${draft.groups.indexOf(empty[0])}`,
+    };
+    return null;
   }
-  function close() { $('#modal').hidden = true; draft = null; if (opener) opener.focus(); onClose && onClose(); }
+  function disarm() {
+    clearTimeout(armT); armT = 0;
+    const b = $('#rDefault'); if (b) { b.textContent = 'Restore class list'; b.classList.remove('arm'); }
+  }
+  function close() {
+    if (!draft) return;
+    $('#modal').hidden = true; cancelAnimationFrame(raf); raf = 0; hot = null;
+    $('#gcols').innerHTML = ''; live = []; draft = null; disarm();
+    // focus goes to the stage, not back to the Roster button, so the next Space does not reopen the sheet
+    const sg = $('#stage');
+    if (sg && sg.hasAttribute('tabindex')) sg.focus({ preventScroll: true });
+    else if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    const cb = onClose; onSave = onClose = null; cb && cb();
+  }
+  // Esc and the backdrop only close a sheet with nothing to lose
+  function tryClose() {
+    if (!draft) return;
+    if (!dirty() && !$('#pasteText').value.trim()) return close();
+    note('Unsaved changes: save them, or press Cancel to drop them.');
+    const s = $('#modal .sheet'); if (s) { s.classList.remove('shake'); void s.offsetWidth; s.classList.add('shake'); }
+  }
 
-  function open(current, cb, closeCb) {
-    draft = copy(current); onSave = cb; onClose = closeCb; opener = document.activeElement;
-    $('#paste').hidden = true; $('#togglePaste').setAttribute('aria-expanded', 'false');
-    render(); $('#modal').hidden = false; $('#gMinus').focus();
+  // open(current roster, onSave(newRoster), onClose(), { midGame, picked })
+  function open(current, cb, closeCb, o) {
+    draft = normalize(copy(current)); base = JSON.stringify(draft);
+    onSave = cb; onClose = closeCb; opts = o || {};
+    disarm();
+    $('#paste').hidden = true; $('#togglePaste').setAttribute('aria-expanded', 'false'); $('#pasteText').value = '';
+    render(); $('#modal').hidden = false;
+    const s = $('#modal .sheet'); (s || $('#gPlus')).focus();
+    if (!raf && window.requestAnimationFrame) raf = requestAnimationFrame(tick);
   }
 
   function wire() {
+    const modal = $('#modal'), sheet = $('#modal .sheet');
+    if (sheet) {
+      if (!sheet.hasAttribute('tabindex')) sheet.tabIndex = -1;
+      sheet.addEventListener('animationend', () => sheet.classList.remove('shake'));
+    }
     $('#gMinus').addEventListener('click', () => setCount(draft.groups.length - 1));
     $('#gPlus').addEventListener('click', () => setCount(draft.groups.length + 1));
     $('#shuffle').addEventListener('click', shuffleInto);
@@ -165,32 +359,62 @@ window.Roster = (() => {
     });
     const doPaste = replace => {
       const res = parse($('#pasteText').value);
-      if (!res.groups.length && !res.names.length) return;
-      if (res.headed) {
-        if (replace) draft.groups = res.groups.filter(g => g.members.length).slice(0, MAX_GROUPS);
-        else res.groups.forEach(pg => {
+      const got = res.headed ? res.groups : [{ name: '', members: res.names }];
+      const skipped = dedupe(got, replace ? new Set() : listed());
+      if (!got.some(g => g.members.length)) { note(skipped ? 'Every name there is already listed.' : 'No names found in that text.'); return; }
+      let spill = [];
+      if (res.headed && replace) {
+        const keep = draft.groups.map(g => g.animal), gs = got.filter(g => g.members.length);
+        spill = gs.splice(MAX_GROUPS).flatMap(g => g.members);
+        draft.groups = gs.map((g, i) => ({ name: g.name, animal: keep[i], members: g.members }));
+      } else if (res.headed) {
+        got.forEach(pg => {
+          if (!pg.members.length) return;
           const g = draft.groups.find(x => x.name.toLowerCase() === pg.name.toLowerCase());
-          if (g) g.members.push(...pg.members); else if (draft.groups.length < MAX_GROUPS) draft.groups.push(pg);
+          if (g) g.members.push(...pg.members);
+          else if (draft.groups.length < MAX_GROUPS) draft.groups.push({ name: pg.name, animal: null, members: pg.members });
+          else spill.push(...pg.members);
         });
       } else {
         if (replace) draft.groups.forEach(g => g.members = []);
-        res.names.forEach(m => draft.groups[smallest()].members.push(m));
+        spill = got[0].members;
       }
+      normalize(draft);
+      const folded = res.headed && spill.length;
+      spill.forEach(m => draft.groups[smallest()].members.push(m));
       $('#pasteText').value = ''; $('#paste').hidden = true; $('#togglePaste').setAttribute('aria-expanded', 'false');
       render();
+      note([skippedNote(skipped), folded ? `Only ${MAX_GROUPS} groups fit, so the rest joined the smallest groups.` : ''].filter(Boolean).join(' '));
     };
     $('#pasteReplace').addEventListener('click', () => doPaste(true));
     $('#pasteAdd').addEventListener('click', () => doPaste(false));
-    $('#rDefault').addEventListener('click', () => { draft = fresh(); render(); });
+    // two clicks, so one stray click cannot replace a real class with the built-in list
+    $('#rDefault').addEventListener('click', e => {
+      if (!draft) return;
+      if (!armT) { const b = e.currentTarget; b.textContent = 'Click again to replace your list'; b.classList.add('arm'); armT = setTimeout(disarm, 3000); return; }
+      disarm();
+      const keep = draft.groups.map(g => g.animal);
+      draft = fresh(); draft.groups.forEach((g, i) => { if (keep[i]) g.animal = keep[i]; });
+      render();
+    });
     $('#rCancel').addEventListener('click', close);
     $('#rSave').addEventListener('click', () => {
+      if (!draft || !dirty()) return;
       const err = validate();
-      if (err) { const e = $('#rErr'); e.textContent = err; e.hidden = false; return; }
-      const out = copy(draft); save(out); close(); onSave && onSave(out);
+      if (err) { render(); note(err.msg); const f = document.getElementById(err.focus); if (f) f.focus(); return; }
+      const out = copy(draft), cb = onSave; save(out); close(); cb && cb(out);
     });
-    $('#modal').addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
-    $('#modal').addEventListener('pointerdown', e => { if (e.target.id === 'modal') close(); });
+    // keys typed in the sheet never reach the game's shortcuts
+    modal.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); tryClose(); } e.stopPropagation(); });
+    addEventListener('keydown', e => {   // focus fell out of the sheet (a click on the backdrop): still no game keys
+      if (!draft || modal.contains(e.target)) return;
+      e.stopImmediatePropagation(); e.preventDefault();
+      if (e.key === 'Escape') tryClose(); else (sheet || $('#gPlus')).focus();
+    }, true);
+    modal.addEventListener('pointerdown', e => { if (e.target === modal) tryClose(); });
+    document.addEventListener('focusin', e => { if (draft && !modal.contains(e.target)) (sheet || $('#gPlus')).focus(); });
   }
 
-  return { load, save, fresh, open, wire, present, total };
+  const isOpen = () => !!draft;
+  return { load, save, fresh, open, wire, present, total, parse, isOpen, animalName, ANIMAL_KEYS };
 })();

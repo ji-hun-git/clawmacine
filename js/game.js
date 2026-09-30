@@ -1,366 +1,464 @@
-// Game flow: roster → roulette sets the group order → one claw round per group → roll call.
+// Roll Call Crane: the director. Act 1 sets the order (wheel or race), act 2 runs the crane once per group,
+// the reveal takes the room, the teacher marks present or absent. Everything the class sees is staged here:
+// house lights and letterbox follow the camera's drama, the countdown sits on the glass, the name gets the room.
 (() => {
   const $ = s => document.querySelector(s);
-  const { C, GROUP, drawCan, canStyle } = ART;
+  const { C, GROUP } = ART;
+  const body = document.body, stage = $('#stage');
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const ANIMAL_KEYS = ['redpanda', 'turtle', 'axolotl', 'shark', 'pangolin'];
+  const ORD = ['1ST', '2ND', '3RD', '4TH', '5TH', '6TH', '7TH', '8TH'];
+  const WORD = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth'];
+  const sfx = (n, v) => SFX[n] && SFX[n](v);
+  const animalOf = key => (window.ANIMALS || {})[key];
 
   let roster = Roster.load();
-  let groups = [];            // playable groups: { no, name, sty, members: [names present] }
-  let phase = 'order';        // order | play | done
-  let remaining = [], order = [], results = [], turn = -1, revealCan = null;
+  let groups = [];                  // { no, name, sty, animal, members: [names present] }
+  let act = 'order', mode = 'wheel';
+  let remaining = [], order = [], results = [], turn = -1;
+  let revealCan = null, revealAt = 0, holdTimer = null, holdUntil = 0, lastMark = null, pendingNext = null, absentTimer = null;
+  try { mode = localStorage.getItem('rcc-order-mode') === 'race' ? 'race' : 'wheel'; } catch (e) {}
 
-  // ---------- counter display (mechanical flip digits + message) ----------
-  const flip = $('#flip'), fg = flip.getContext('2d');
-  const fdpr = Math.min(2, window.devicePixelRatio || 1);
-  flip.width = 58 * fdpr; flip.height = 44 * fdpr;
-  function setFlip(str) {
-    fg.setTransform(fdpr, 0, 0, fdpr, 0, 0); fg.clearRect(0, 0, 58, 44);
-    [...str.padStart(2, ' ').slice(-2)].forEach((ch, i) => {
-      const x = 2 + i * 28;
-      ART.rr(fg, x, 2, 26, 40, 4); fg.fillStyle = '#2c2b30'; fg.fill();
-      fg.fillStyle = '#f3efe4'; fg.font = '26px "Alfa Slab One", Rockwell, serif'; fg.textAlign = 'center'; fg.textBaseline = 'middle';
-      fg.fillText(ch, x + 13, 24);
-      fg.fillStyle = 'rgba(0,0,0,.55)'; fg.fillRect(x, 21.5, 26, 1.5);
-    });
-  }
-  function led(msg, sub = '') { $('#msg').textContent = msg; $('#sub').textContent = sub; }
-  function banner(text) { const b = $('#banner'); b.textContent = text; b.classList.remove('go'); void b.offsetWidth; b.classList.add('go'); }
-  function stepRail(n) {
-    document.querySelectorAll('#steps li').forEach(li => {
-      const s = +li.dataset.step;
-      li.classList.toggle('on', s === n); li.classList.toggle('did', s < n);
-      if (s === n) li.setAttribute('aria-current', 'step'); else li.removeAttribute('aria-current');
-    });
+  // ---------- small helpers ----------
+  const upper = s => s.toUpperCase();
+  const short = s => s.length > 12 ? s.slice(0, 11) + '…' : s;
+  const copiesFor = n => Math.max(2, Math.min(6, Math.round(16 / Math.max(1, n))));
+  const bibOf = g => { const s = GROUP[g.sty % GROUP.length]; return { n: g.no, bg: s.bg, fg: s.fg }; };
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  function say(state, line = '') { $('#msg').textContent = state; $('#sub').textContent = line; }
+  function sign(main, subline = '') { $('#sign').textContent = main; $('#signsub').textContent = subline; }
+  function setAct(a) { act = a; body.dataset.act = a; }
+  function badge(g) {
+    const s = GROUP[g.sty % GROUP.length], b = document.createElement('span');
+    b.className = 'g'; b.textContent = g.no; b.style.background = s.bg; b.style.color = s.fg; return b;
   }
 
-  // ---------- roulette ----------
+  // ---------- fit the 1600x900 stage to the window ----------
+  function fit() {
+    const flow = innerWidth < 760 && innerHeight > innerWidth * 1.05;
+    body.classList.toggle('flow', flow);
+    stage.style.setProperty('--fit', Math.min(innerWidth / 1600, innerHeight / 900));
+  }
+  fit(); addEventListener('resize', fit);
+
+  // ---------- the order wheel ----------
   const wheel = Roulette($('#wheel'), {
-    unlock: SFX.unlock,
-    sfx: (n, v) => SFX[n] && SFX[n](v),
-    roll: v => SFX.roll(v),
-    onLaunch() { $('#spin').disabled = true; led('NO MORE BETS!', 'The ball is rolling…'); },
-    onWeak() { led('GIVE IT A REAL FLICK', 'Drag the wheel and let go fast, or press Spin.'); },
+    unlock: SFX.unlock, sfx, roll: v => SFX.roll(v),
+    onLaunch() { $('#spin').disabled = true; say('BALL ON THE TRACK', 'It slows, drops and lands in a pocket.'); },
+    onWeak() { say('TOO SLOW TO LAUNCH', 'Drag the wheel and let go faster, or press Spin.'); },
     onResult(gi) {
       const g = remaining[gi];
-      wheel.lock(true);
-      SFX.ding(); banner(`${g.name}!`);
-      led(`#${order.length + 1} · ${g.name.toUpperCase()}`, '');
+      wheel.lock(true); sfx('ding');
+      say(`${ORD[order.length]} · ${upper(short(g.name))}`, `${g.name} goes ${WORD[order.length]}.`);
       setTimeout(() => {
-        remaining.splice(gi, 1); order.push(g); renderTickets(order.length - 1); renderLegend();
+        remaining.splice(gi, 1); order.push(g); renderRows(order.length - 1);
         if (remaining.length === 1) {
           const last = remaining.pop();
           setTimeout(() => {
-            order.push(last); wheel.setGroups([]); renderTickets(order.length - 1); renderLegend();
-            banner(`${last.name} last`); SFX.coin();
-            led('ORDER IS SET', `${last.name} goes last. Get ready to catch!`);
-            setTimeout(startPlay, 1800);
+            order.push(last); wheel.setGroups([]); renderRows(order.length - 1);
+            say('ORDER SET', `${last.name} goes last. The crane loads ${order[0].name} now.`);
+            setTimeout(startPlay, 1900);
           }, 700);
         } else {
           wheel.setGroups(remaining); wheel.lock(false); $('#spin').disabled = false;
-          led('SPIN AGAIN', `${remaining.length} groups left on the wheel`);
+          say(`SPIN FOR ${ORD[order.length]}`, `${plural(remaining.length, 'group')} left on the wheel.`);
         }
-      }, 1600);
+      }, 1500);
     },
   });
 
-  // ---------- claw machine ----------
+  // ---------- the animal race ----------
+  const race = Race($('#race'), {
+    sfx, roll: v => SFX.roll(v),
+    onLine() {},                       // the race prints its own commentary strip
+    onFinish(list) {
+      order = list.slice(); remaining = [];
+      renderRows();
+      say('ORDER SET', `${order[0].name} goes first. The crane loads now.`);
+      setTimeout(startPlay, 1800);
+    },
+  });
+
+  // ---------- the crane ----------
   const machine = Machine($('#machine'), {
-    sfx: (n, v) => SFX[n] && SFX[n](v),
-    motor: (l, p) => SFX.motor(l, p),
-    onReady() { led(`${order[turn].name.toUpperCase()} · YOUR MOVE`, 'Aim with the stick, then GRAB. 15 seconds.'); },
-    onNeedMove() { led('MOVE THE CLAW FIRST', 'Steer it over a can, then grab.'); SFX.miss(); },
-    onTimeUp() { banner('TIME UP'); led('TIME UP!', 'The claw picks by itself.'); },
-    onMiss() { banner('MISS!'); SFX.miss(); led('SO CLOSE!', 'The timer is reset. Try again.'); },
-    onSlip() { banner('SLIPPED!'); led('IT SLIPPED!', 'Hard claw is on. Aim for the middle.'); },
-    onPick(can, bonus) { showReveal(can, bonus); },
+    sfx, motor: (l, p) => SFX.motor(l, p),
+    onReady() { say('COUNTDOWN', 'Then the crane picks one name. Every name has the same odds.'); },
+    onSeek() { say('CRANE IS CHOOSING', 'It stops over one can and drops.'); },
+    onMiss() { sfx('miss'); say('NO GRAB', 'Nothing in the chute. The crane goes again.'); },
+    onSlip() { say('CAN SLIPPED', 'Weak grip is on. The crane goes again.'); },
+    onPick(can) { showReveal(can); },
+    onBeat() {},
   });
 
   // ---------- setup ----------
   function buildGroups() {
-    groups = roster.groups.map((g, i) => ({ no: i + 1, name: g.name, sty: i, members: g.members.filter(m => !m.away).map(m => m.name) }))
-      .filter(g => g.members.length);
+    groups = roster.groups.map((g, i) => ({
+      no: i + 1, name: g.name, sty: i, animal: g.animal || ANIMAL_KEYS[i % ANIMAL_KEYS.length],
+      members: g.members.filter(m => !m.away).map(m => m.name),
+    })).filter(g => g.members.length);
     const p = Roster.present(roster);
-    $('#rosterCount').textContent = `${p} · ${groups.length}`;
-    $('#openRoster').setAttribute('aria-label', `Roster: ${p} students here in ${groups.length} groups. Edit.`);
+    $('#rosterCount').textContent = `· ${p} in ${plural(groups.length, 'group')}`;
   }
   function reset() {
+    clearTimeout(holdTimer); clearTimeout(pendingNext); clearTimeout(absentTimer); holdTimer = pendingNext = absentTimer = null;
     buildGroups();
-    phase = 'order'; remaining = groups.slice(); order = []; results = []; turn = -1; revealCan = null;
+    setAct('order'); remaining = groups.slice(); order = []; results = []; turn = -1; revealCan = null; lastMark = null;
+    $('#reveal').hidden = true; $('#board').hidden = true;
     wheel.setGroups(remaining); wheel.lock(false);
-    $('#spin').disabled = groups.length < 2;
-    $('#endRow').hidden = true; $('#reveal').hidden = true;
     machine.attract(groups.flatMap(g => g.members));
-    renderTickets(); renderLegend(); setFlip('--'); stepRail(2);
-    led(groups.length < 2 ? 'NEED 2 GROUPS' : 'FLICK THE WHEEL', groups.length < 2 ? 'Open the roster and add groups.' : 'The ball decides which group plays first.');
+    sign('ROLL CALL CRANE', 'One pick per group');
+    applyMode();
+    race.setup(groups);
+    renderRows();
   }
-
-  function renderLegend() {
-    const ul = $('#legend'); ul.innerHTML = '';
-    groups.forEach(g => {
-      const li = document.createElement('li');
-      if (!remaining.includes(g)) li.className = 'out';
-      const n = document.createElement('span'); n.className = 'num'; n.textContent = g.no;
-      const s = GROUP[g.sty % GROUP.length]; n.style.background = s.bg; n.style.color = s.fg;
-      const t = document.createElement('span'); t.textContent = `${g.name} · ${g.members.length}`;
-      li.append(n, t); ul.append(li);
-    });
+  function applyMode() {
+    body.dataset.mode = mode;
+    $('#modeWheel').setAttribute('aria-checked', String(mode === 'wheel'));
+    $('#modeRace').setAttribute('aria-checked', String(mode === 'race'));
+    $('#spinLabel').textContent = mode === 'wheel' ? 'Spin' : 'Start the race';
+    $('#spin').disabled = groups.length < 2;
+    if (groups.length < 2) { say('NEEDS 2 GROUPS', 'Open the roster and add a group.'); return; }
+    if (mode === 'wheel') say('READY', 'Spin the wheel. The ball sets which group goes first.');
+    else {
+      const names = groups.map(g => (animalOf(g.animal) || { name: g.animal }).name.toLowerCase());
+      say('RACE READY', `${plural(groups.length, 'animal')} on the line, one per group. The finishing order sets the order.`);
+      $('#sub').title = names.join(', ');
+    }
   }
+  function setMode(m) {
+    if (act !== 'order' || order.length || wheel.busy || race.state === 'count' || race.state === 'run') return;
+    mode = m; try { localStorage.setItem('rcc-order-mode', m); } catch (e) {}
+    applyMode();
+    if (m === 'race') race.setup(groups);
+  }
+  $('#modeWheel').addEventListener('click', () => setMode('wheel'));
+  $('#modeRace').addEventListener('click', () => setMode('race'));
 
-  function renderTickets(popIdx) {
-    const ol = $('#tickets'); ol.innerHTML = '';
+  function spin() {
+    SFX.unlock();
+    if (act !== 'order' || groups.length < 2) return;
+    if (mode === 'wheel') wheel.spin();
+    else if (race.state === 'ready') { $('#spin').disabled = true; race.start(); say('RACE ON', 'The finishing order sets the order of the groups.'); }
+  }
+  $('#spin').addEventListener('click', spin);
+
+  // ---------- the list of order and picks ----------
+  function renderRows(pop) {
+    const ol = $('#rows'); ol.innerHTML = '';
     for (let i = 0; i < groups.length; i++) {
       const g = order[i], r = results[i], li = document.createElement('li');
-      li.className = 'ticket';
-      if (phase === 'play' && i === turn) li.classList.add('cur');
-      if (r && r.pick) li.classList.add('done');
-      if (i === popIdx) li.classList.add('pop');
-      const stub = document.createElement('div'); stub.className = 'stub'; stub.textContent = g ? `#${i + 1}` : '?';
-      const body = document.createElement('div'); body.className = 'tbody';
+      if (act === 'play' && i === turn) li.className = 'cur';
+      if (i === pop) li.classList.add('pop');
+      const n = document.createElement('span'); n.className = 'n'; n.textContent = i + 1;
+      li.append(n);
       if (g) {
-        const tg = document.createElement('div'); tg.className = 'tg';
-        const n = document.createElement('span'); n.className = 'num'; n.textContent = g.no;
-        const s = GROUP[g.sty % GROUP.length]; n.style.background = s.bg; n.style.color = s.fg;
-        const nm = document.createElement('span'); nm.textContent = g.name;
-        tg.append(n, nm); body.append(tg);
-        const tp = document.createElement('div');
-        if (r && r.pick) { tp.className = 'tp'; tp.textContent = r.pick; }
-        else {
-          tp.className = 'tp wait';
-          tp.textContent = phase === 'play' && i === turn ? (revealCan ? `Checking ${revealCan.name}…` : 'Catching now…')
-            : phase === 'done' || (r && r.none) ? 'Nobody here' : `${g.members.length} cans waiting`;
-        }
-        body.append(tp);
+        li.append(badge(g));
+        const who = document.createElement('span'); who.className = 'who';
+        if (r && r.pick) who.textContent = r.pick;
+        else if (r && r.none) { who.textContent = 'Nobody here'; who.classList.add('wait'); }
+        else if (act === 'play' && i === turn) { who.textContent = revealCan ? `Roll call: ${revealCan.name}` : 'In the machine'; who.classList.add('wait'); }
+        else { who.textContent = `${g.name} · ${plural(g.members.length, 'name')}`; who.classList.add('wait'); }
+        li.append(who);
         if (r && r.absent.length) {
-          const ta = document.createElement('div'); ta.className = 'ta'; ta.append('Absent: ');
-          r.absent.forEach((nm2, k) => { if (k) ta.append(', '); const s2 = document.createElement('s'); s2.textContent = nm2; ta.append(s2); });
-          body.append(ta);
+          const a = document.createElement('span'); a.className = 'abs'; a.append('Absent: ');
+          r.absent.forEach((nm, k) => { if (k) a.append(', '); const s = document.createElement('s'); s.textContent = nm; a.append(s); });
+          li.append(a);
         }
-      } else {
-        const tp = document.createElement('div'); tp.className = 'tp wait'; tp.textContent = 'Spin to reveal'; body.append(tp);
-      }
-      li.append(stub, body); ol.append(li);
+      } else li.append(document.createElement('span'));
+      ol.append(li);
     }
-    const done = results.filter(r => r && (r.pick || r.none)).length;
-    $('#ticketSub').textContent = phase === 'order' ? 'Order and picks' : `${done} of ${groups.length} picked`;
+    $('#listHead').textContent = act === 'order' ? 'Order' : 'Order and picks';
+    const pool = $('#pool');
+    pool.textContent = act === 'order' && remaining.length && mode === 'wheel' ? `On the wheel: ${remaining.map(g => g.name).join(', ')}` : '';
   }
 
   // ---------- rounds ----------
   function startPlay() {
-    phase = 'play'; stepRail(3); loadTurn(0);
-    // one-column layout: bring the machine into view for the catching part
-    if (matchMedia('(max-width: 1080px)').matches) $('.cabinet').scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
+    setAct('play'); loadTurn(0);
+    if (body.classList.contains('flow')) $('.cabinet').scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
   }
   function loadTurn(i) {
-    turn = i; results[i] = { pick: null, absent: [], none: false }; revealCan = null;
-    const g = order[i];
-    banner(g.name); SFX.coin();
-    machine.play(g.members, g.name);
-    led(`${g.name.toUpperCase()} · INSERT COIN`, `${g.members.length} cans dropping in…`);
-    renderTickets();
+    turn = i; results[i] = { pick: null, absent: [], none: false }; revealCan = null; lastMark = null;
+    const g = order[i], copies = copiesFor(g.members.length);
+    machine.setRider(g.animal, bibOf(g));
+    machine.play(g.members, g.name, copies);
+    sign(upper(g.name), `Now picking · ${plural(g.members.length, 'name')}`);
+    say('COIN IN', `${g.name}: ${plural(g.members.length, 'name')}, ${copies} cans each. The crane starts on its own.`);
+    sfx('coin'); renderRows();
   }
   function nextTurn() { if (turn + 1 < order.length) loadTurn(turn + 1); else finish(); }
   function finish() {
-    phase = 'done'; turn = -1; renderTickets();
-    banner('GAME CLEAR!'); SFX.fanfare(); confetti(); setTimeout(confetti, 450);
-    led('GAME CLEAR!', 'Copy the tickets or play a rematch.'); setFlip('--');
-    machine.attract(groups.flatMap(g => g.members));
-    $('#endRow').hidden = false;
+    setAct('done'); turn = -1; renderRows();
+    const ol = $('#boardRows'); ol.innerHTML = $('#rows').innerHTML; ol.querySelectorAll('li').forEach(li => li.classList.remove('cur', 'pop'));
+    $('#boardDate').textContent = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    $('#board').hidden = false;
+    sign('ROLL CALL DONE', `${plural(order.length, 'group')} picked`);
+    say('ALL GROUPS DONE', 'Copy the list or run again.');
+    sfx('ding');
   }
 
   // ---------- reveal ----------
   const pc = $('#portrait'), pg = pc.getContext('2d');
   const pdpr = Math.min(2, window.devicePixelRatio || 1);
-  pc.width = 150 * pdpr; pc.height = 170 * pdpr;
-  function portrait(can, squash = 0, tilt = 0) {
-    pg.setTransform(pdpr, 0, 0, pdpr, 0, 0); pg.clearRect(0, 0, 150, 170);
-    const sq = Math.min(.62, squash);
-    drawCan(pg, can, 75, 88 + sq * 50, tilt, 96, 128, { squash: sq, shadow: true });
+  pc.width = 520 * pdpr; pc.height = 560 * pdpr;
+  const rv = { t: 0, spin: .5, squash: 0, pose: 'idle', running: false, last: 0 };
+  function paintPortrait(now) {
+    if (!rv.running) return;
+    const dt = Math.min(.05, (now - rv.last) / 1000 || 0); rv.last = now; rv.t += dt;
+    const can = revealCan || rv.can;
+    pg.setTransform(pdpr, 0, 0, pdpr, 0, 0); pg.clearRect(0, 0, 520, 560);
+    // a pool of lamp light on the floor
+    // an elliptical pool that fades out well inside the canvas, so no edge shows on the black room
+    pg.save(); pg.translate(260, 478); pg.scale(1, .3);
+    const pool = pg.createRadialGradient(0, 0, 8, 0, 0, 250);
+    pool.addColorStop(0, 'rgba(255,233,196,.3)'); pool.addColorStop(1, 'rgba(255,233,196,0)');
+    pg.fillStyle = pool; pg.beginPath(); pg.arc(0, 0, 250, 0, Math.PI * 2); pg.fill(); pg.restore();
+    if (can) {
+      const k = Math.min(1, rv.t / 1.1), e = 1 - Math.pow(1 - k, 3);
+      const spin = reduced ? 0 : .5 * (1 - e);
+      const sq = rv.squash, w = 200, h = w * (can.h / can.w);
+      ART.drawCan(pg, can, 200, 470 - h / 2 * (1 - sq * .7), 0, w, h, { spin, squash: sq, shadow: true, rim: 1 });
+    }
+    const g = order[turn] || rv.group, A = g && animalOf(g.animal);
+    if (A) { pg.save(); pg.translate(408, 500); A.draw(pg, { t: rv.t, mode: rv.pose, speed: 1, emotion: 'cheer', look: 0, bib: bibOf(g), scale: 1.45 }); pg.restore(); }
+    requestAnimationFrame(paintPortrait);
   }
-  function animate(ms, fn, done) {
-    const t0 = performance.now();
-    (function tick(now) { const k = Math.min(1, (now - t0) / ms); fn(k); if (k < 1) requestAnimationFrame(tick); else done && done(); })(t0);
+  function fitName(el, maxW) {
+    for (let s = 125; s >= 62; s -= 3) { el.style.fontStretch = s + '%'; if (el.scrollWidth <= maxW) return; }
+    let size = parseFloat(getComputedStyle(el).fontSize);
+    while (el.scrollWidth > maxW && size > 24) { size -= 4; el.style.fontSize = size + 'px'; }
   }
-  function showReveal(can, bonus) {
-    revealCan = can;
-    portrait(can);
-    $('#rvGroup').innerHTML = '';
-    const g = order[turn], n = document.createElement('span'); n.className = 'num'; n.textContent = g.no;
-    const s = GROUP[g.sty % GROUP.length]; n.style.background = s.bg; n.style.color = s.fg;
-    $('#rvGroup').append(n, `${g.name}${bonus ? ' · Bonus drop!' : ''}`);
-    $('#rvName').textContent = can.name;
-    const st = $('#stamp'); st.className = 'stamp'; st.textContent = '';
+  function showReveal(can) {
+    revealCan = can; rv.can = can; rv.group = order[turn]; rv.t = 0; rv.squash = 0; rv.pose = 'idle';
+    const g = order[turn], [first, last] = ART.splitName(can.name);
+    const grp = $('#rvGroup'); grp.innerHTML = ''; grp.append(badge(g), g.name);
+    const f = $('#rvFirst'), l = $('#rvLast');
+    f.className = ''; l.className = ''; f.style.fontSize = ''; l.style.fontSize = '';
+    f.textContent = first; l.textContent = last;
+    $('#rvNext').innerHTML = ''; $('#stamp').className = 'stamp'; $('#stamp').textContent = '';
+    $('#rvKeys').classList.remove('on'); $('#undo').hidden = true;
     $('#here').disabled = $('#absent').disabled = false;
     $('#reveal').hidden = false;
-    const card = $('#card'); card.classList.remove('in'); void card.offsetWidth; card.classList.add('in');
-    SFX.fanfare();
-    led(`PICKED: ${can.name.toUpperCase()}`, 'Is this student here today?');
-    renderTickets();
-    $('#here').focus({ preventScroll: true });
-    if (!reduced) animate(500, k => portrait(can, 0, Math.sin(k * Math.PI * 3) * .12 * (1 - k)));
+    const maxW = $('.rv-text').clientWidth || innerWidth * .5;
+    fitName(f, maxW); fitName(l, maxW);
+    revealAt = performance.now();
+    sfx('vacuum', 500);
+    say('IN THE CHUTE', `${can.name}. Mark present (P) or absent (A).`);
+    renderRows();
+    if (!rv.running) { rv.running = true; rv.last = performance.now(); requestAnimationFrame(paintPortrait); }
+    setTimeout(() => { if (revealCan === can) { f.classList.add('in'); sfx('sting'); rv.pose = 'cheer'; } }, reduced ? 0 : 1100);
+    setTimeout(() => { if (revealCan === can) l.classList.add('in'); }, reduced ? 0 : 1550);
+    setTimeout(() => { if (revealCan === can) $('#rvKeys').classList.add('on'); }, reduced ? 0 : 1800);
   }
   function stamp(text, cls) {
     const st = $('#stamp'); st.textContent = text; st.className = 'stamp ' + cls; void st.offsetWidth; st.classList.add('go');
-    const card = $('#card'); card.classList.remove('thud', 'in'); void card.offsetWidth; card.classList.add('thud');
-    SFX.stamp(); machine.kick(5);
+    sfx('stamp');
   }
+  const canDecide = () => revealCan && !$('#reveal').hidden && performance.now() - revealAt > (reduced ? 200 : 1200);
   function markHere() {
-    if (!revealCan) return;
+    if (!canDecide()) return;
     const can = revealCan; revealCan = null;
     $('#here').disabled = $('#absent').disabled = true;
-    stamp('PRESENT', 'ok'); setTimeout(SFX.popTop, 120); confetti();
-    results[turn].pick = can.name; renderTickets(turn);
-    led(`${can.name.toUpperCase()} IS UP!`, turn + 1 < order.length ? `Next: ${order[turn + 1].name}` : 'That was the last group.');
-    setTimeout(() => { $('#reveal').hidden = true; nextTurn(); }, 1700);
+    stamp('PRESENT', 'ok'); setTimeout(() => sfx('popTop'), 110);
+    results[turn].pick = can.name; renderRows(turn);
+    lastMark = { kind: 'here', turn, can };
+    $('#undo').hidden = false;
+    const nextG = order[turn + 1];
+    say('PRESENT', nextG ? `${can.name}. ${nextG.name} loads next.` : `${can.name}. That was the last group.`);
+    const holdMs = 4000;
+    const nx = $('#rvNext'); nx.innerHTML = '';
+    nx.append(nextG ? `Next: ${nextG.name}. Space to go now.` : 'That was the last group. Space to see the list.');
+    const barEl = document.createElement('span'); barEl.className = 'bar'; nx.append(barEl);
+    barEl.animate([{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }], { duration: holdMs, easing: 'linear', fill: 'forwards' });
+    holdUntil = performance.now() + holdMs;
+    holdTimer = setTimeout(proceed, holdMs);
+  }
+  function proceed() {
+    clearTimeout(holdTimer); holdTimer = null; holdUntil = 0;
+    if (lastMark && lastMark.kind === 'here' && lastMark.turn === turn) lastMark = null;
+    rv.running = false; $('#reveal').hidden = true;
+    nextTurn();
   }
   function markAbsent() {
-    if (!revealCan) return;
+    if (!canDecide()) return;
     const can = revealCan; revealCan = null;
     $('#here').disabled = $('#absent').disabled = true;
-    stamp('ABSENT', 'no'); setTimeout(SFX.crush, 100); setTimeout(SFX.buzz, 380);
-    if (!reduced) animate(420, k => portrait(can, k * .62));
-    else portrait(can, .62);
-    results[turn].absent.push(can.name); renderTickets(turn);
-    setTimeout(() => {
-      $('#reveal').hidden = true;
-      const left = machine.left();
+    stamp('ABSENT', 'no'); setTimeout(() => sfx('crush'), 90);
+    const t0 = performance.now();
+    const crush = now => { const k = Math.min(1, (now - t0) / 320); rv.squash = .62 * k * k; rv.pose = 'worry'; if (k < 1) requestAnimationFrame(crush); };
+    if (!reduced) requestAnimationFrame(crush); else rv.squash = .62;
+    results[turn].absent.push(can.name); renderRows(turn);
+    lastMark = { kind: 'absent', turn, can };
+    $('#undo').hidden = false;
+    const g = order[turn];
+    clearTimeout(absentTimer);
+    absentTimer = setTimeout(() => {
+      absentTimer = null;
+      rv.running = false; $('#reveal').hidden = true;
+      machine.removeStudent(can.name);
+      const left = machine.students();
       if (left > 0) {
-        machine.resume(); banner('ONE MORE CHANCE!'); SFX.coin();
-        led('ONE MORE CHANCE!', `${left} can${left === 1 ? '' : 's'} left for ${order[turn].name}.`);
-        renderTickets();
+        machine.resume();
+        say('ABSENT', `${plural(left, 'name')} left in ${g.name}. The crane goes again.`);
       } else {
-        results[turn].none = true; renderTickets();
-        banner('NOBODY LEFT'); led('NOBODY LEFT', `No one from ${order[turn].name} is here.`);
-        setTimeout(nextTurn, 1600);
+        results[turn].none = true; renderRows();
+        say('NOBODY HERE', order[turn + 1] ? `No one from ${g.name} is here. ${order[turn + 1].name} loads next.` : `No one from ${g.name} is here.`);
+        pendingNext = setTimeout(nextTurn, 2400);
       }
-    }, 1400);
+    }, 1300);
+  }
+  function undo() {
+    const m = lastMark;
+    if (!m || m.turn !== turn) return;
+    if (m.kind === 'here' && holdTimer) {
+      clearTimeout(holdTimer); holdTimer = null;
+      results[turn].pick = null; revealCan = m.can; revealAt = 0; lastMark = null;
+      $('#stamp').className = 'stamp'; $('#rvNext').innerHTML = ''; $('#undo').hidden = true;
+      $('#here').disabled = $('#absent').disabled = false;
+      say('UNDONE', `${m.can.name}. Mark present (P) or absent (A).`);
+      renderRows();
+    } else if (m.kind === 'absent' && (absentTimer || pendingNext || machine.mode === 'aim' || machine.mode === 'seek' || machine.mode === 'load')) {
+      clearTimeout(pendingNext); pendingNext = null;
+      const r = results[turn], i = r.absent.lastIndexOf(m.can.name);
+      if (i >= 0) r.absent.splice(i, 1);
+      r.none = false; lastMark = null;
+      if (absentTimer) {
+        // still on the reveal: cancel the exit, take the stamp back and let the teacher decide again
+        clearTimeout(absentTimer); absentTimer = null;
+        rv.squash = 0; rv.pose = 'cheer'; revealCan = m.can; revealAt = 0;
+        $('#stamp').className = 'stamp'; $('#undo').hidden = true; $('#here').disabled = $('#absent').disabled = false;
+        say('UNDONE', `${m.can.name}. Mark present (P) or absent (A).`);
+      } else {
+        machine.restoreStudent(m.can.name);
+        if (machine.mode !== 'aim' && machine.mode !== 'seek' && machine.mode !== 'load') machine.resume();
+        say('UNDONE', `${m.can.name} is back in the machine.`);
+      }
+      renderRows();
+    }
   }
   $('#here').addEventListener('click', markHere);
   $('#absent').addEventListener('click', markAbsent);
+  $('#undo').addEventListener('click', undo);
 
-  // ---------- controls ----------
-  $('#spin').addEventListener('click', () => { SFX.unlock(); if (phase === 'order') wheel.spin(); });
-  const joy = $('#joy'), stick = $('#joyStick');
-  let joyId = null, keyDir = 0;
-  function setJoy(v) {
-    stick.style.transform = `rotate(${v * 30}deg)`;
-    joy.setAttribute('aria-valuenow', v.toFixed(1));
-    machine.setInput(v);
+  // ---------- teacher controls ----------
+  function startNow() {
+    const b = $('#start'); b.classList.add('hit'); setTimeout(() => b.classList.remove('hit'), 140);
+    machine.go();
   }
-  function moveJoy(e) {
-    const r = joy.getBoundingClientRect();
-    setJoy(Math.max(-1, Math.min(1, (e.clientX - (r.left + r.width / 2)) / (r.width * .34))));
-  }
-  joy.addEventListener('pointerdown', e => { SFX.unlock(); joyId = e.pointerId; joy.setPointerCapture(e.pointerId); joy.classList.add('dragging'); moveJoy(e); });
-  joy.addEventListener('pointermove', e => { if (e.pointerId === joyId) moveJoy(e); });
-  ['pointerup', 'pointercancel'].forEach(t => joy.addEventListener(t, e => {
-    if (e.pointerId !== joyId) return;
-    joyId = null; joy.classList.remove('dragging'); setJoy(keyDir);
-  }));
-  function grab() {
-    SFX.unlock();
-    const b = $('#grab'); b.classList.add('hit'); setTimeout(() => b.classList.remove('hit'), 140);
-    if (phase === 'play') machine.drop();
-    else if (phase === 'order') led('SPIN THE WHEEL FIRST', 'The order decides which group catches first.');
-  }
-  $('#grab').addEventListener('click', grab);
-  $('#auto').addEventListener('click', () => { SFX.unlock(); machine.autoAim(); });
-
-  const held = new Set();
-  const syncKeys = () => { keyDir = (held.has('R') ? 1 : 0) - (held.has('L') ? 1 : 0); if (joyId == null) setJoy(keyDir); };
-  addEventListener('keydown', e => {
-    const tag = e.target.tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || !$('#modal').hidden) return;
-    SFX.unlock();
-    const k = e.key;
-    if (!$('#reveal').hidden) {
-      if (k === 'h' || k === 'H') { markHere(); e.preventDefault(); }
-      if (k === 'x' || k === 'X') { markAbsent(); e.preventDefault(); }
-      return;
-    }
-    if (k === 'ArrowLeft' || k === 'a' || k === 'A') { held.add('L'); syncKeys(); e.preventDefault(); }
-    else if (k === 'ArrowRight' || k === 'd' || k === 'D') { held.add('R'); syncKeys(); e.preventDefault(); }
-    else if ((k === ' ' || k === 'ArrowDown' || k === 'Enter') && !e.repeat) {
-      if (tag === 'BUTTON' && k !== 'ArrowDown') return;
-      if (phase === 'order') wheel.spin(); else if (phase === 'play') grab();
-      e.preventDefault();
-    }
-  });
-  addEventListener('keyup', e => {
-    if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') held.delete('L');
-    if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') held.delete('R');
-    syncKeys();
-  });
-  addEventListener('blur', () => { held.clear(); syncKeys(); });
-  addEventListener('pointerdown', () => SFX.unlock(), { capture: true });
-
+  $('#start').addEventListener('click', () => { SFX.unlock(); startNow(); });
   $('#hard').addEventListener('click', e => {
     const on = e.currentTarget.getAttribute('aria-pressed') !== 'true';
-    e.currentTarget.setAttribute('aria-pressed', String(on)); machine.setHard(on);
+    e.currentTarget.setAttribute('aria-pressed', String(on)); e.currentTarget.textContent = `Weak grip: ${on ? 'on' : 'off'}`;
+    machine.setHard(on); e.currentTarget.blur();
   });
-  $('#sound').addEventListener('click', e => { SFX.unlock(); e.currentTarget.setAttribute('aria-pressed', String(SFX.toggle())); });
-  $('#openRoster').addEventListener('click', () => {
-    stepRail(1);
-    Roster.open(roster, r => { roster = r; reset(); }, () => stepRail(phase === 'order' ? 2 : 3));
-  });
+  function toggleSound() {
+    SFX.unlock(); const on = SFX.toggle();
+    const b = $('#sound'); b.setAttribute('aria-pressed', String(on)); b.textContent = `Sound: ${on ? 'on' : 'off'}`; b.blur();
+  }
+  $('#sound').addEventListener('click', toggleSound);
+  function toggleFull() {
+    const d = document;
+    if (d.fullscreenElement) d.exitFullscreen && d.exitFullscreen();
+    else d.documentElement.requestFullscreen && d.documentElement.requestFullscreen().catch(() => {});
+    $('#full').blur();
+  }
+  $('#full').addEventListener('click', toggleFull);
+  document.addEventListener('fullscreenchange', () => body.classList.toggle('presenting', !!document.fullscreenElement));
+  let idleT = null;
+  addEventListener('pointermove', () => { body.classList.remove('idle'); clearTimeout(idleT); idleT = setTimeout(() => body.classList.add('idle'), 2200); });
+  const keys = $('#keys');
+  $('#keysBtn').addEventListener('click', () => { keys.hidden = false; $('#keysClose').focus(); });
+  $('#keysClose').addEventListener('click', () => { keys.hidden = true; stage.focus(); });
+  function openRoster() {
+    const picked = results.filter(r => r && (r.pick || r.none)).length;
+    Roster.open(roster, r => { roster = r; reset(); }, () => stage.focus(), { midGame: act !== 'order' || order.length > 0, picked });
+  }
+  $('#openRoster').addEventListener('click', openRoster);
   Roster.wire();
   $('#again').addEventListener('click', reset);
   $('#copy').addEventListener('click', () => {
-    const txt = 'Tin Can Roulette results\n' + order.map((g, i) => {
+    const date = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    const txt = `Roll Call Crane · ${date}\n` + order.map((g, i) => {
       const r = results[i] || { absent: [] };
-      return `#${i + 1} ${g.name}: ${r.pick || 'nobody here'}${r.absent.length ? ` (absent: ${r.absent.join(', ')})` : ''}`;
+      return `${i + 1}. ${g.name}: ${r.pick || 'nobody here'}${r.absent.length ? ` (absent: ${r.absent.join(', ')})` : ''}`;
     }).join('\n');
     const btn = $('#copy');
     (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject())
-      .then(() => { btn.textContent = 'Copied'; setTimeout(() => btn.textContent = 'Copy results', 1500); })
-      .catch(() => led('COPY WAS BLOCKED', 'Select the tickets and copy them by hand.'));
+      .then(() => { btn.textContent = 'Copied'; setTimeout(() => btn.textContent = 'Copy list', 1500); })
+      .catch(() => say('CLIPBOARD BLOCKED', 'Select the list and copy it by hand.'));
   });
 
-  // ---------- marquee bulbs + confetti ----------
-  const bulbRows = document.querySelectorAll('.bulbs');
-  bulbRows.forEach(row => { for (let i = 0; i < 16; i++) row.append(document.createElement('i')); });
-  const fx = $('#fx'), fxg = fx.getContext('2d');
-  let bits = [];
-  function sizeFx() { const d = Math.min(2, window.devicePixelRatio || 1); fx.width = innerWidth * d; fx.height = innerHeight * d; fxg.setTransform(d, 0, 0, d, 0, 0); }
-  sizeFx(); addEventListener('resize', sizeFx);
-  function confetti() {
-    if (reduced) return;
-    const box = $('#machine').getBoundingClientRect(), ox = box.left + box.width / 2, oy = box.top + box.height * .35;
-    const cols = [C.TOMATO, C.MUSTARD, C.COBALT, C.MINT, C.WHITE];
-    for (let i = 0; i < 140; i++) bits.push({
-      x: ox, y: oy, vx: (Math.random() - .5) * 13, vy: -Math.random() * 11 - 3, s: 5 + Math.random() * 6,
-      r: Math.random() * 6, vr: (Math.random() - .5) * .35, c: cols[i % cols.length], star: i % 7 === 0, life: 130 + Math.random() * 50 });
-  }
+  addEventListener('keydown', e => {
+    if (e.target.closest && e.target.closest('.sheet')) return;
+    if (!$('#modal').hidden) return;
+    const k = e.key;
+    if (!keys.hidden) { if (k === 'Escape' || k === '?') keys.hidden = true; return; }
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+    SFX.unlock();
+    const lower = k.length === 1 ? k.toLowerCase() : k;
+    if (lower === 'f') { toggleFull(); e.preventDefault(); return; }
+    if (lower === 'm') { toggleSound(); e.preventDefault(); return; }
+    if (lower === '?') { keys.hidden = false; e.preventDefault(); return; }
+    if (lower === 'z' || (k === 'Backspace' && !$('#reveal').hidden)) { undo(); e.preventDefault(); return; }
+    if (lower === 'r' && act === 'order' && !order.length) { openRoster(); e.preventDefault(); return; }
+    if (!$('#reveal').hidden) {
+      if (lower === 'p' || lower === 'h') { markHere(); e.preventDefault(); }
+      else if (lower === 'a' || lower === 'x') { markAbsent(); e.preventDefault(); }
+      else if ((k === ' ' || k === 'Enter' || k === 'ArrowRight') && holdTimer) { proceed(); e.preventDefault(); }
+      return;
+    }
+    if (k === ' ' || k === 'Enter' || k === 'ArrowRight' || k === 'PageDown') {
+      if (e.target.tagName === 'BUTTON' && k !== 'ArrowRight' && k !== 'PageDown' && e.target !== $('#spin') && e.target !== $('#start')) return;
+      if (act === 'order') spin(); else if (act === 'play') startNow();
+      e.preventDefault();
+    }
+  });
+  addEventListener('pointerdown', () => SFX.unlock(), { capture: true });
 
-  // ---------- loop ----------
-  let last = performance.now(), lastSec = -1;
+  // ---------- the loop: time, light, sound ----------
+  const bulbRows = document.querySelectorAll('.bulbs');
+  bulbRows.forEach(row => { for (let i = 0; i < 18; i++) row.append(document.createElement('i')); });
+  let last = performance.now(), ts = 1, drama = 0, lastCount = 0, beat = 0, lightsDown = false;
+  function lightCenter() {
+    const el = act === 'order' ? (mode === 'wheel' ? $('.wheelbox') : $('.racebox')) : $('.glass');
+    const r = el.getBoundingClientRect();
+    if (!r.width) return;
+    body.style.setProperty('--cx', ((r.left + r.width / 2) / innerWidth * 100).toFixed(1) + '%');
+    body.style.setProperty('--cy', ((r.top + r.height / 2) / innerHeight * 100).toFixed(1) + '%');
+  }
   function frame(now) {
     const dt = Math.min(.05, (now - last) / 1000); last = now;
-    wheel.step(dt);
-    machine.frame(dt);
-    if (phase === 'play' && machine.mode === 'aim') {
-      const s = Math.ceil(machine.timer);
-      if (s !== lastSec) { lastSec = s; setFlip(String(s)); if (s <= 3 && s > 0) SFX.beep(s === 1); }
-    } else if (lastSec !== -1) { lastSec = -1; setFlip('--'); }
-    const k = Math.floor(now / 140);
-    bulbRows.forEach((row, ri) => [...row.children].forEach((b, i) => b.classList.toggle('on', reduced || (i + k + ri) % 3 === 0)));
-    fxg.clearRect(0, 0, innerWidth, innerHeight);
-    bits = bits.filter(b => b.life-- > 0 && b.y < innerHeight + 30);
-    for (const b of bits) {
-      b.vy += .3; b.vx *= .99; b.x += b.vx; b.y += b.vy; b.r += b.vr;
-      fxg.save(); fxg.translate(b.x, b.y); fxg.rotate(b.r); fxg.fillStyle = b.c; fxg.strokeStyle = C.INK; fxg.lineWidth = 1.2;
-      if (b.star) { ART.star(fxg, 0, 0, b.s * .8); fxg.fill(); fxg.stroke(); }
-      else { fxg.fillRect(-b.s / 2, -b.s / 4, b.s, b.s / 2); fxg.strokeRect(-b.s / 2, -b.s / 4, b.s, b.s / 2); }
-      fxg.restore();
-    }
+    let want = 1, d = 0;
+    if (act === 'order' && mode === 'wheel') { want = 1 - (wheel.wantSlow || 0); ts += (want - ts) * (1 - Math.exp(-dt * 12)); wheel.step(dt * ts, dt); d = wheel.drama || 0; }
+    else if (act === 'order') { race.step(dt); d = race.drama || 0; ts = race.timeScale ?? 1; }
+    else { ts = 1; machine.frame(dt, dt); d = machine.drama || 0; }
+    if (!$('#reveal').hidden) d = 1;
+    drama += (d - drama) * (1 - Math.exp(-dt * 5));
+    body.style.setProperty('--drama', drama.toFixed(3));
+    const down = drama > .35;
+    if (down !== lightsDown) { lightsDown = down; body.classList.toggle('lightsdown', down); }
+    if (SFX.slow) SFX.slow(act === 'play' ? (machine.wantSlow ?? 1) : ts);
+    lightCenter();
+    // countdown numerals on the glass
+    const cnt = $('#count');
+    if (act === 'play' && machine.mode === 'aim') {
+      const n = Math.max(1, Math.ceil(machine.timer / .6));
+      if (n !== lastCount) { lastCount = n; cnt.textContent = n; cnt.classList.remove('tick'); void cnt.offsetWidth; cnt.classList.add('tick'); }
+      $('#start').classList.add('ready');
+    } else { lastCount = 0; $('#start').classList.remove('ready'); }
+    // heartbeat while the camera is close
+    if (drama > .55 && !reduced) { beat += dt * (1.2 + drama * .6); if (beat >= 1) { beat = 0; sfx('heart', drama); } } else beat = .6;
+    // bulbs: chase when idle, all on during the countdown, dark during the grab
+    const k = Math.floor(now / 140), m = machine.mode;
+    const allOn = act === 'play' && m === 'aim', allOff = drama > .5;
+    bulbRows.forEach((row, ri) => [...row.children].forEach((b, i) => b.classList.toggle('on', !allOff && (allOn || reduced || (i + k + ri) % 3 === 0))));
     requestAnimationFrame(frame);
   }
 
   reset();
   requestAnimationFrame(frame);
-  // #debug exposes the parts so a test can step frames by hand
   if (location.hash === '#debug') window.__claw = {
-    wheel, machine, get phase() { return phase; },
-    tick(n = 60) { for (let i = 0; i < n; i++) { wheel.step(1 / 60); machine.frame(1 / 60); } },
+    wheel, race, machine, get act() { return act; }, get mode() { return mode; },
+    tick(n = 60) { for (let i = 0; i < n; i++) { if (act === 'order' && mode === 'wheel') wheel.step(1 / 60, 1 / 60); else if (act === 'order') race.step(1 / 60); else machine.frame(1 / 60, 1 / 60); } },
   };
-  if (document.fonts) document.fonts.ready.then(() => { setFlip('--'); });
 })();
