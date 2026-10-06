@@ -708,7 +708,7 @@ window.Race = function (canvas, hooks) {
         if (r.place === 1) {
           flash = reduced ? 0 : 1; freeze = reduced ? 0 : .7; sfx('drum', 0); sfx('shutter');
           const gap = racers.length > 1 ? T1 - r.T : 1;
-          say(gap < .16 ? `Photo finish · ${nameOf(r)}` : `${nameOf(r)} wins`);
+          { const L = window.I18N; say(gap < .16 ? (L ? L.t('race.photo', { name: nameOf(r) }) : `Photo finish · ${nameOf(r)}`) : (L ? L.t('race.wins', { name: nameOf(r) }) : `${nameOf(r)} wins`)); }
           sfx('crowd');
         }
         if (crossed.length === racers.length) { state = 'done'; doneT = 0; }
@@ -720,7 +720,7 @@ window.Race = function (canvas, hooks) {
       const l = leaderAt(t);
       if (l !== leader && t > .9) {
         const r = racers[l];
-        if (leader !== -1) { say(`${nameOf(r)} leads`); if (near) sfx('gasp'); }
+        if (leader !== -1) { const L = window.I18N; say(L ? L.t('race.leads', { name: nameOf(r) }) : `${nameOf(r)} leads`); if (near) sfx('gasp'); }
         leader = l;
       }
     }

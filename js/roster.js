@@ -90,7 +90,7 @@ window.Roster = (() => {
       cur = { name: h.name, members: [] }; groups.push(cur);
       if (h.rest) add(h.rest);
     })));
-    if (loose.length && groups.length) groups.unshift({ name: 'Ungrouped', members: loose.slice() });
+    if (loose.length && groups.length) groups.unshift({ name: (window.I18N ? I18N.t : ((k) => k))('r.ungrouped'), members: loose.slice() });
     return { headed: groups.length > 0, groups, names: loose };
   }
   const present = r => r.groups.reduce((s, g) => s + g.members.filter(m => !m.away).length, 0);
@@ -184,9 +184,11 @@ window.Roster = (() => {
     const inks = (window.ART && ART.GROUP) || [{ bg: '#1c1b1f', fg: '#fbf8f1' }];
     draft.groups.forEach((g, gi) => box.append(column(g, gi, inks)));
     const n = draft.groups.length, p = present(draft), t = total(draft);
-    $('#gOut').textContent = plural(n, 'group');
+    const L = window.I18N;
+    $('#gOut').textContent = L ? L.count(n, 'n.group', 'n.groups') : plural(n, 'group');
     $('#gMinus').disabled = n <= 1; $('#gPlus').disabled = n >= MAX_GROUPS;
-    $('#rCount').textContent = `${p} here${t - p ? ` · ${t - p} absent` : ''} · ${plural(n, 'group')}`;
+    $('#rCount').textContent = L ? `${L.t('r.here', { p })}${t - p ? ` · ${L.t('r.absentn', { n: t - p })}` : ''} · ${L.count(n, 'n.group', 'n.groups')}`
+      : `${p} here${t - p ? ` · ${t - p} absent` : ''} · ${plural(n, 'group')}`;
     note('');
     foot();
     if (focusKey) { const f = box.querySelector(`[data-k="${focusKey}"]`); if (f) f.focus(); }
@@ -205,7 +207,7 @@ window.Roster = (() => {
     const names = mk('div', 'names');
     g.members.forEach((m, mi) => names.append(chip(m, gi, mi)));
     const add = mk('form', 'add');
-    const inp = mk('input'); inp.id = `add${gi}`; inp.dataset.k = `add${gi}`; inp.placeholder = 'Add a name'; inp.autocomplete = 'off';
+    const inp = mk('input'); inp.id = `add${gi}`; inp.dataset.k = `add${gi}`; inp.placeholder = (window.I18N ? I18N.t : ((k) => k))('r.addname'); inp.autocomplete = 'off';
     inp.setAttribute('aria-label', `Add a name to group ${gi + 1}`);
     const btn = mk('button', '', 'Add'); btn.type = 'submit';
     add.append(inp, btn);
@@ -297,14 +299,14 @@ window.Roster = (() => {
   function foot() {
     const b = $('#rSave'); if (!b || !draft) return;
     b.disabled = !dirty();
-    if (!opts.midGame) { b.textContent = 'Save'; return; }
-    b.textContent = 'Save and start over';
+    if (!opts.midGame) { b.textContent = (window.I18N ? I18N.t : ((k) => k))('r.save'); return; }
+    b.textContent = (window.I18N ? I18N.t : ((k) => k))('r.saveover');
     const n = opts.picked | 0;
-    if (n > 0) b.append(mk('small', '', `Loses ${plural(n, 'pick')}`));
+    if (n > 0) b.append(mk('small', '', window.I18N && I18N.lang === 'ko' ? I18N.t('r.loses', { n }) : `Loses ${plural(n, 'pick')}`));
   }
   function validate() {
     draft.groups.forEach((g, i) => { g.name = g.name.trim() || `Group ${i + 1}`; });
-    if (draft.groups.length < 2) return { msg: 'The order needs at least 2 groups.', focus: 'gPlus' };
+    if (draft.groups.length < 2) return { msg: (window.I18N ? I18N.t : ((k) => k))('r.need2'), focus: 'gPlus' };
     const empty = draft.groups.filter(g => !here(g));
     if (empty.length) return {
       msg: `${empty.map(g => g.name).join(', ')} ${empty.length === 1 ? 'has' : 'have'} nobody here. Add a name or use fewer groups.`,
@@ -314,7 +316,7 @@ window.Roster = (() => {
   }
   function disarm() {
     clearTimeout(armT); armT = 0;
-    const b = $('#rDefault'); if (b) { b.textContent = 'Restore class list'; b.classList.remove('arm'); }
+    const b = $('#rDefault'); if (b) { b.textContent = (window.I18N ? I18N.t : ((k) => k))('r.restore'); b.classList.remove('arm'); }
   }
   function close() {
     if (!draft) return;
@@ -330,7 +332,7 @@ window.Roster = (() => {
   function tryClose() {
     if (!draft) return;
     if (!dirty() && !$('#pasteText').value.trim()) return close();
-    note('Unsaved changes: save them, or press Cancel to drop them.');
+    note((window.I18N ? I18N.t : ((k) => k))('r.unsaved'));
     const s = $('#modal .sheet'); if (s) { s.classList.remove('shake'); void s.offsetWidth; s.classList.add('shake'); }
   }
 
@@ -362,7 +364,7 @@ window.Roster = (() => {
       const res = parse($('#pasteText').value);
       const got = res.headed ? res.groups : [{ name: '', members: res.names }];
       const skipped = dedupe(got, replace ? new Set() : listed());
-      if (!got.some(g => g.members.length)) { note(skipped ? 'Every name there is already listed.' : 'No names found in that text.'); return; }
+      if (!got.some(g => g.members.length)) { note((window.I18N ? I18N.t : ((k) => k))(skipped ? 'r.dupes' : 'r.nonames')); return; }
       let spill = [];
       if (res.headed && replace) {
         const keep = draft.groups.map(g => g.animal), gs = got.filter(g => g.members.length);
@@ -392,7 +394,7 @@ window.Roster = (() => {
     // two clicks, so one stray click cannot replace a real class with the built-in list
     $('#rDefault').addEventListener('click', e => {
       if (!draft) return;
-      if (!armT) { const b = e.currentTarget; b.textContent = 'Click again to replace your list'; b.classList.add('arm'); armT = setTimeout(disarm, 3000); return; }
+      if (!armT) { const b = e.currentTarget; b.textContent = (window.I18N ? I18N.t : ((k) => k))('r.restore2'); b.classList.add('arm'); armT = setTimeout(disarm, 3000); return; }
       disarm();
       const keep = draft.groups.map(g => g.animal);
       draft = fresh(); draft.groups.forEach((g, i) => { if (keep[i]) g.animal = keep[i]; });

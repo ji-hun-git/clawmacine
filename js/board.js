@@ -19,7 +19,7 @@ window.Board = function (box, hooks, tray) {
   function load(fallback) {
     try {
       const v = JSON.parse(localStorage.getItem(KEY));
-      if (v && Array.isArray(v.names) && v.names.length) {
+      if (v && Array.isArray(v.names)) {
         names = [...new Set(v.names.filter(n => !ART.isRetired(n)).map(clean).filter(Boolean))];
         marks = (v.marks || []).filter(m => m && names.includes(m.name) && (m.kind === 'here' || m.kind === 'absent'));
         return;
@@ -49,9 +49,9 @@ window.Board = function (box, hooks, tray) {
 
   function tileEl(name, cls) {
     const t = document.createElement('div');
-    t.className = 'tile ' + cls; t.dataset.name = name; t.setAttribute('role', 'listitem');
+    t.className = 'tile ' + cls; t.dataset.name = name; t.setAttribute('role', 'listitem'); t.setAttribute('aria-label', name);
     const [first, ...rest] = name.split(' ');
-    t.innerHTML = '<i class="bulb" aria-hidden="true"></i><span class="nm"><b></b><small></small></span>';
+    t.innerHTML = '<i class="bulb" aria-hidden="true"></i><span class="nm" aria-hidden="true"><b></b><small></small></span>';
     t.querySelector('b').textContent = first; t.querySelector('small').textContent = rest.join(' ');
     if (editing) {
       const x = document.createElement('button'); x.className = 'del'; x.type = 'button'; x.textContent = '×';
@@ -69,15 +69,29 @@ window.Board = function (box, hooks, tray) {
     live.forEach((name, i) => grid.append(tileEl(name, (Math.floor(i / cols) + i % cols) % 2 ? 'dark' : 'light')));
     if (editing) {
       const add = document.createElement('form'); add.className = 'tile add';
-      add.innerHTML = '<input id="lbAdd" autocomplete="off" spellcheck="false" placeholder="Add name" aria-label="Add a name">';
-      add.addEventListener('submit', e => {
-        e.preventDefault();
-        const inp = add.querySelector('input'), added = addNames(inp.value);
-        inp.value = '';
-        if (added) { render(); const again = grid.querySelector('#lbAdd'); if (again) again.focus(); }
+      const tr = (window.I18N ? I18N.t : (k => k));
+      add.innerHTML = '<input id="lbAdd" autocomplete="off" spellcheck="false">';
+      const inp = add.querySelector('input');
+      inp.placeholder = tr('add.name'); inp.setAttribute('aria-label', tr('add.name'));
+      // true when the box can be cleared; an empty Enter leaves edit mode
+      const submit = text => {
+        if (!text.trim()) { hooks.onEditExit && hooks.onEditExit(); return true; }
+        const r = addNames(text);
+        if (r.dupe) hooks.onDuplicate && hooks.onDuplicate(r.dupe);
+        if (r.added) { render(); const again = grid.querySelector('#lbAdd'); if (again) again.focus(); return true; }
+        return false;
+      };
+      add.addEventListener('submit', e => { e.preventDefault(); if (submit(inp.value)) inp.value = ''; else inp.select(); });
+      // a pasted column of names becomes one tile per line
+      inp.addEventListener('paste', e => {
+        const text = (e.clipboardData || window.clipboardData).getData('text');
+        if (/[\r\n\t]/.test(text)) { e.preventDefault(); submit(text); }
       });
+      inp.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); hooks.onEditExit && hooks.onEditExit(); } });
       grid.append(add);
     }
+    const cells = cols * Math.max(1, Math.ceil(Math.max(1, live.length + (editing ? 1 : 0)) / cols));
+    for (let k = live.length + (editing ? 1 : 0); k < cells; k++) { const sk = document.createElement('div'); sk.className = 'socket'; sk.setAttribute('aria-hidden', 'true'); grid.append(sk); }
     renderTray();
     hooks.onChange && hooks.onChange();
   }
@@ -88,28 +102,34 @@ window.Board = function (box, hooks, tray) {
     const here = marks.filter(m => m.kind === 'here'), away = marks.filter(m => m.kind === 'absent');
     const list = tray.querySelector('.tray-list'), abs = tray.querySelector('.tray-absent');
     list.innerHTML = ''; abs.innerHTML = '';
-    list.classList.toggle('two', here.length > 6 && here.length <= 14);
-    list.classList.toggle('three', here.length > 14);
+    const total = marks.length;
+    list.classList.toggle('two', total > 5 && total <= 12);
+    list.classList.toggle('three', total > 12);
+    tray.classList.toggle('dense', total > 12);
     here.forEach((m, i) => {
       const t = tileEl(m.name, 'mini'); t.classList.add('here');
-      const s = document.createElement('span'); s.className = 'mark'; s.textContent = `#${i + 1}`; t.prepend(s);
+      const s = document.createElement('span'); s.className = 'mark'; s.textContent = `#${i + 1}`; s.setAttribute('aria-hidden', 'true'); t.prepend(s);
+      t.setAttribute('aria-label', `${m.name}, #${i + 1}`);
       list.append(t);
     });
-    away.forEach(m => { const t = tileEl(m.name, 'mini'); t.classList.add('absent'); abs.append(t); });
+    away.forEach(m => { const t = tileEl(m.name, 'mini'); t.classList.add('absent'); t.setAttribute('aria-label', `${m.name}, ${(window.I18N ? I18N.t : (k => k))('tray.absent')}`); abs.append(t); });
     tray.querySelector('.tray-absent-wrap').hidden = !away.length;
   }
 
   function addNames(text) {
     const have = new Set(names.map(n => n.toLowerCase()));
-    let added = 0;
-    text.split(/[,\n]/).map(clean).filter(n => n && !ART.isRetired(n)).forEach(n => { if (!have.has(n.toLowerCase())) { names.push(n); have.add(n.toLowerCase()); added++; } });
+    let added = 0, dupe = '';
+    text.split(/[,\r\n\t;]/).map(clean).filter(n => n && !ART.isRetired(n)).forEach(n => {
+      if (!have.has(n.toLowerCase())) { names.push(n); have.add(n.toLowerCase()); added++; } else dupe = dupe || n;
+    });
     if (added) save();
-    return added;
+    return { added, dupe };
   }
   function remove(name) {
     if (busy || shuffling) return;
     names = names.filter(n => n !== name); marks = marks.filter(m => m.name !== name);
     save(); animateTo(() => render(), 'reflow');
+    if (editing) { const a = grid.querySelector('#lbAdd'); if (a) a.focus(); }
   }
   const tileOf = name => [...grid.querySelectorAll('.tile')].find(t => t.dataset.name === name);
 
@@ -278,6 +298,8 @@ window.Board = function (box, hooks, tray) {
     if (!ghost || !tray) return done;
     const target = [...tray.querySelectorAll('.tile')].find(t => t.dataset.name === name);
     if (!target) return done;
+    const bed = tray.querySelector('.tray-bed');
+    if (bed) { const tr = target.getBoundingClientRect(), br = bed.getBoundingClientRect(); if (tr.bottom > br.bottom || tr.top < br.top) bed.scrollTop += tr.top - br.top - 8; }
     const to = target.getBoundingClientRect();
     target.style.visibility = 'hidden';
     ghost.classList.remove('lit', 'trail');
@@ -309,6 +331,14 @@ window.Board = function (box, hooks, tray) {
     render, pick, shuffle, mark, unmark, clearWin,
     clearMarks() { stopAll(); busy = false; shuffling = false; dramaTo = 0; marks = []; save(); return animateTo(() => render(), 'reflow'); },
     setNames(list) { stopAll(); busy = false; names = [...new Set(list.map(clean).filter(Boolean))]; marks = []; save(); render(); },
+    // the roster changed: take its names, keep the marks of names that are still there
+    syncNames(list) {
+      stopAll(); busy = false; shuffling = false; dramaTo = 0;
+      names = [...new Set(list.filter(n => !ART.isRetired(n)).map(clean).filter(Boolean))];
+      marks = marks.filter(m => names.includes(m.name));
+      save(); render();
+    },
+    stop() { stopAll(); busy = false; shuffling = false; dramaTo = 0; clearWin(); },
     edit(on) { if (busy || shuffling) return editing; editing = on; render(); if (on) { const a = grid.querySelector('#lbAdd'); if (a) a.focus(); } return editing; },
     step(dt) { drama += (dramaTo - drama) * (1 - Math.exp(-dt * 4)); },
     setSpeed(v) { speed = Math.max(.25, Math.min(4, +v || 1)); },

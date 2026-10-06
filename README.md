@@ -39,6 +39,12 @@ Under the board: **Edit names** (type a name on the last tile, or press × on a 
 
 The **Speed** slider in the top-right corner (0.5× to 3×, also [ and ]) speeds up or slows down every game: the wheel, the race, the crane and the board, and the pauses between beats. The time you get to mark a student present or absent never drops below 1.5 seconds.
 
+## Language and quality
+
+The **한국어 / English** button in the top-right switches every control, caption and the roster editor between Korean and English. Student and group names are never translated. The choice is saved in the browser.
+
+**Quality** keeps the animation smooth on slower laptops and projectors. On **Auto** (the default) the page lowers its render resolution when frames start to drop and raises it again once frames are fast again. **High** always uses full resolution and **Low** always uses the lightest setting.
+
 ## The animals
 
 | Animal | IUCN status | How it runs |
@@ -71,6 +77,7 @@ js/art.js         palette and the lit tin can
 js/animals/*.js   the five animals (kit.js is the shared drawing kit)
 js/roster.js      roster editor
 js/sfx.js         synthesised sound
+js/i18n.js        English and Korean text
 tools/animal-smoke.js  smoke test for an animal module
 tools/animals.html     every animal in every pose
 tools/cans.html        can preview

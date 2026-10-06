@@ -15,24 +15,24 @@
 <div class="stage" id="stage" tabindex="-1">
   <section class="act-order" aria-label="Order">
     <div class="modes" role="radiogroup" aria-label="Game">
-      <button role="radio" id="modeWheel" aria-checked="true">Wheel</button>
-      <button role="radio" id="modeRace" aria-checked="false">Race</button>
-      <button role="radio" id="modeBoard" aria-checked="false">Board</button>
+      <button role="radio" id="modeWheel" aria-checked="true" data-i18n="mode.wheel">Wheel</button>
+      <button role="radio" id="modeRace" aria-checked="false" data-i18n="mode.race">Race</button>
+      <button role="radio" id="modeBoard" aria-checked="false" data-i18n="mode.board">Board</button>
     </div>
     <div class="wheelbox"><canvas id="wheel" width="330" height="330" aria-label="Order wheel"></canvas></div>
     <div class="racebox"><canvas id="race" width="960" height="440" aria-label="Animal race"></canvas></div>
-    <div class="boardbox" id="boardbox" aria-label="Light board">
+    <div class="boardbox" id="boardbox" role="region" aria-label="Light board">
       <div class="lb-frame">
         <div class="lb-bulbs bulbs" aria-hidden="true"></div>
         <div class="lb-grid" role="list"></div>
-        <div class="lb-plate" aria-hidden="true">ROLL CALL</div>
+        <div class="lb-plate" aria-hidden="true" data-i18n="plate">ROLL CALL</div>
       </div>
       <div class="lb-tools">
-        <button id="lbShuffle">Shuffle <kbd>S</kbd></button>
-        <button id="lbEdit" aria-pressed="false">Edit names</button>
-        <button id="lbClear">Clear marks</button>
-        <button id="lbRoster">Load roster</button>
-        <button id="lbCopy">Copy picks</button>
+        <button id="lbShuffle"><span data-i18n="btn.shuffle">Shuffle</span> <kbd>S</kbd></button>
+        <button id="lbEdit" aria-pressed="false" data-i18n="btn.edit">Edit names</button>
+        <button id="lbClear" data-i18n="btn.clear">Clear marks</button>
+        <button id="lbRoster" data-i18n="btn.load">Load roster</button>
+        <button id="lbCopy" data-i18n="btn.copy">Copy picks</button>
       </div>
     </div>
     <button class="go" id="spin"><span id="spinLabel">Spin</span> <kbd>Space</kbd></button>
@@ -51,7 +51,7 @@
     </div>
     <div class="base">
       <div class="slot" aria-hidden="true"><i></i></div>
-      <button class="start" id="start" aria-label="Start the crane now">START</button>
+      <button class="start" id="start" aria-label="Start the crane now" data-i18n="btn.start">START</button>
     </div>
   </section>
 
@@ -62,21 +62,21 @@
   </section>
 
   <section class="tray" id="lbTray" aria-label="Picked">
-    <div class="tray-plate" aria-hidden="true">PICKED</div>
+    <div class="tray-plate" aria-hidden="true" data-i18n="tray.picked">PICKED</div>
     <div class="tray-bed">
       <div class="tray-list" role="list"></div>
-      <div class="tray-absent-wrap" hidden><div class="tray-sub">Absent</div><div class="tray-absent" role="list"></div></div>
+      <div class="tray-absent-wrap" hidden><div class="tray-sub" data-i18n="tray.absent">Absent</div><div class="tray-absent" role="list"></div></div>
     </div>
   </section>
 
-  <div class="caption" aria-live="polite"><b id="msg">POWER ON</b><span id="sub"></span></div>
+  <div class="caption" aria-live="polite"><b id="msg" data-i18n="s.power">POWER ON</b><span id="sub"></span></div>
 
   <div class="board" id="board" hidden>
-    <h2>Roll call <span id="boardDate"></span></h2>
+    <h2><span data-i18n="board.title">Roll call</span> <span id="boardDate"></span></h2>
     <ol class="rows big" id="boardRows"></ol>
     <div class="board-actions">
-      <button class="go" id="copy">Copy list</button>
-      <button class="go ghost" id="again">Run again</button>
+      <button class="go" id="copy" data-i18n="btn.copylist">Copy list</button>
+      <button class="go ghost" id="again" data-i18n="btn.again">Run again</button>
     </div>
   </div>
 </div>
@@ -88,64 +88,65 @@
   <canvas id="portrait" width="520" height="560" aria-hidden="true"></canvas>
   <div class="rv-text">
     <div class="rv-group" id="rvGroup"></div>
-    <div class="rv-name"><span id="rvFirst"></span><span id="rvLast"></span></div>
+    <div class="rv-name"><span id="rvFirst"></span><span id="rvLast"></span><div class="stamp" id="stamp"></div></div>
     <div class="rv-next" id="rvNext"></div>
   </div>
-  <div class="stamp" id="stamp"></div>
   <div class="rv-keys" id="rvKeys">
-    <button id="here">Present <kbd>P</kbd></button>
-    <button id="absent">Absent <kbd>A</kbd></button>
-    <button id="undo" hidden>Undo <kbd>Z</kbd></button>
+    <button id="here"><span data-i18n="btn.present">Present</span> <kbd>P</kbd></button>
+    <button id="absent"><span data-i18n="btn.absent">Absent</span> <kbd>A</kbd></button>
+    <button id="undo" hidden><span data-i18n="btn.undo">Undo</span> <kbd>Z</kbd></button>
   </div>
 </div>
 
 <nav class="teacher" aria-label="Teacher controls">
-  <button id="openRoster">Roster <span id="rosterCount"></span></button>
+  <button id="openRoster"><span data-i18n="bar.roster">Roster</span> <span id="rosterCount"></span></button>
   <button id="hard" aria-pressed="false">Weak grip: off</button>
   <button id="sound" aria-pressed="true">Sound: on</button>
-  <label class="speed" for="speed">Speed <input type="range" id="speed" min="0.5" max="3" step="0.25" value="1"> <output id="speedOut">1×</output></label>
-  <button id="full">Full screen <kbd>F</kbd></button>
-  <button id="keysBtn">Keys <kbd>?</kbd></button>
+  <label class="speed" for="speed"><span data-i18n="bar.speed">Speed</span> <input type="range" id="speed" min="0.5" max="3" step="0.25" value="1"> <output id="speedOut">1×</output></label>
+  <button id="quality">Quality: Auto</button>
+  <button id="full"><span data-i18n="bar.full">Full screen</span> <kbd>F</kbd></button>
+  <button id="keysBtn"><span data-i18n="bar.keys">Keys</span> <kbd>?</kbd></button>
+  <button id="lang" lang="ko" data-i18n="bar.lang">한국어</button>
 </nav>
 
 <div class="keys" id="keys" hidden>
   <div class="keys-sheet" role="dialog" aria-label="Keys">
     <dl>
-      <dt>Space</dt><dd>Spin · Start · Light up · Next</dd>
-      <dt>S</dt><dd>Shuffle the board</dd>
-      <dt>P</dt><dd>Present</dd>
-      <dt>A</dt><dd>Absent</dd>
-      <dt>Z</dt><dd>Undo</dd>
-      <dt>F</dt><dd>Full screen</dd>
-      <dt>M</dt><dd>Sound</dd>
-      <dt>[ ]</dt><dd>Slower · faster</dd>
-      <dt>R</dt><dd>Roster</dd>
+      <dt>Space</dt><dd data-i18n="keys.space">Spin · Start · Light up · Next</dd>
+      <dt>S</dt><dd data-i18n="keys.s">Shuffle the board</dd>
+      <dt>P</dt><dd data-i18n="keys.p">Present</dd>
+      <dt>A</dt><dd data-i18n="keys.a">Absent</dd>
+      <dt>Z</dt><dd data-i18n="keys.z">Undo</dd>
+      <dt>F</dt><dd data-i18n="keys.f">Full screen</dd>
+      <dt>M</dt><dd data-i18n="keys.m">Sound</dd>
+      <dt>[ ]</dt><dd data-i18n="keys.speed">Slower · faster</dd>
+      <dt>R</dt><dd data-i18n="keys.r">Roster</dd>
     </dl>
-    <button class="go" id="keysClose">Close</button>
+    <button class="go" id="keysClose" data-i18n="btn.close">Close</button>
   </div>
 </div>
 
 <div class="modal" id="modal" hidden>
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="rosterTitle">
     <div class="sheet-head">
-      <h2 id="rosterTitle">Roster</h2>
+      <h2 id="rosterTitle" data-i18n="r.title">Roster</h2>
       <span class="count" id="rCount"></span>
     </div>
     <div class="sheet-body">
       <div class="bar">
         <div class="stepper" aria-label="Number of groups">
-          <button id="gMinus" aria-label="Fewer groups">−</button>
+          <button id="gMinus" aria-label="Fewer groups" data-i18n-label="r.fewer">−</button>
           <output id="gOut">4 groups</output>
-          <button id="gPlus" aria-label="More groups">+</button>
+          <button id="gPlus" aria-label="More groups" data-i18n-label="r.more">+</button>
         </div>
-        <button class="btn" id="shuffle">Shuffle names into groups</button>
-        <button class="btn" id="togglePaste" aria-expanded="false">Paste a list</button>
+        <button class="btn" id="shuffle" data-i18n="r.shuffle">Shuffle names into groups</button>
+        <button class="btn" id="togglePaste" aria-expanded="false" data-i18n="r.paste">Paste a list</button>
       </div>
       <div class="paste" id="paste" hidden>
         <textarea id="pasteText" spellcheck="false" placeholder="Group 1&#10;Minjun Kim&#10;Sojeong Lee&#10;Group 2&#10;Jeongseop Park"></textarea>
         <div class="bar">
-          <button class="btn go" id="pasteReplace">Replace roster</button>
-          <button class="btn" id="pasteAdd">Add to roster</button>
+          <button class="btn go" id="pasteReplace" data-i18n="r.replace">Replace roster</button>
+          <button class="btn" id="pasteAdd" data-i18n="r.addto">Add to roster</button>
         </div>
       </div>
       <div class="gcols" id="gcols"></div>
@@ -154,7 +155,7 @@
     <div class="sheet-foot">
       <button class="btn" id="rDefault">Restore class list</button>
       <div class="right">
-        <button class="btn" id="rCancel">Cancel</button>
+        <button class="btn" id="rCancel" data-i18n="r.cancel">Cancel</button>
         <button class="btn go" id="rSave">Save and start over</button>
       </div>
     </div>
@@ -164,6 +165,7 @@
 <script src="lib/matter.min.js"></script>
 <script src="js/sfx.js"></script>
 <script src="js/art.js"></script>
+<script src="js/i18n.js"></script>
 <script src="js/animals/kit.js"></script>
 <script src="js/animals/redpanda.js"></script>
 <script src="js/animals/turtle.js"></script>
