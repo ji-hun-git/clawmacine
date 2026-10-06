@@ -1,5 +1,6 @@
 // Roll Call Crane: the director. Act 1 sets the order (wheel or race), act 2 runs the crane once per group,
-// the reveal takes the room, the teacher marks present or absent. Everything the class sees is staged here:
+// the reveal takes the room, the teacher marks present or absent. Board mode is its own game: a light board
+// picks single names, and a name that has been picked sits out the next picks. Everything the class sees is staged here:
 // house lights and letterbox follow the camera's drama, the countdown sits on the glass, the name gets the room.
 (() => {
   const $ = s => document.querySelector(s);
@@ -17,7 +18,12 @@
   let act = 'order', mode = 'wheel', orderReady = false;
   let remaining = [], order = [], results = [], turn = -1;
   let revealCan = null, revealAt = 0, holdTimer = null, holdUntil = 0, lastMark = null, pendingNext = null, absentTimer = null;
-  try { mode = localStorage.getItem('rcc-order-mode') === 'race' ? 'race' : 'wheel'; } catch (e) {}
+  let boardPending = null, landing = false;
+  // game speed (the slider): scales physics, animation and the gaps between beats; holds for calling a name stay readable
+  let speed = 1;
+  try { speed = Math.max(.5, Math.min(3, +localStorage.getItem('rcc-speed') || 1)); } catch (e) {}
+  const T = ms => ms / speed, HOLD = ms => Math.max(1500, ms / speed);          // a board mark waiting for the name card to close, so the class sees the tile fly
+  try { const m = localStorage.getItem('rcc-order-mode'); mode = m === 'race' || m === 'board' ? m : 'wheel'; } catch (e) {}
 
   // ---------- small helpers ----------
   const upper = s => s.toUpperCase();
@@ -57,12 +63,12 @@
           setTimeout(() => {
             order.push(last); wheel.setGroups([]); renderRows(order.length - 1);
             awaitCrane();
-          }, 700);
+          }, T(700));
         } else {
           wheel.setGroups(remaining); wheel.lock(false); $('#spin').disabled = false;
           say(`SPIN FOR ${ORD[order.length]}`, `${plural(remaining.length, 'group')} left`);
         }
-      }, 1500);
+      }, T(1500));
     },
   });
 
@@ -88,6 +94,27 @@
     onBeat() {},
   });
 
+  // ---------- the light board ----------
+  const rosterNames = () => roster.groups.flatMap(g => g.members.filter(m => !m.away).map(m => m.name));
+  const board = Board($('#boardbox'), {
+    sfx,
+    onStart() { $('#spin').disabled = true; say('LIGHTS ON'); },
+    onShuffle() { $('#spin').disabled = true; say('SHUFFLING'); },
+    onShuffled() { boardIdle(); },
+    onPick(name) { showReveal({ name, ...ART.canStyle(name), w: 60, h: 80 }); },
+    onChange() { if (mode === 'board' && act === 'order' && !board.busy && !landing && $('#reveal').hidden) boardIdle(); },
+  }, $('#lbTray'));
+  board.load(rosterNames());
+  function boardIdle() {
+    const left = board.left, total = board.names.length;
+    $('#spinLabel').textContent = 'Light up';
+    $('#spin').disabled = !left || board.editing || board.busy;
+    $('#lbShuffle').disabled = left < 2 || board.editing || board.busy;
+    if (board.editing) say('EDITING', plural(total, 'name'));
+    else if (!total) say('NO NAMES', 'Edit names');
+    else if (!left) say('ALL PICKED', plural(total, 'name'));
+    else say('READY', `${left} of ${plural(total, 'name')} left`);
+  }
   // ---------- setup ----------
   function buildGroups() {
     groups = roster.groups.map((g, i) => ({
@@ -107,12 +134,14 @@
     sign('ROLL CALL CRANE');
     applyMode();
     race.setup(groups);
-    renderRows();
+    if (mode !== 'board') renderRows();
   }
   function applyMode() {
     body.dataset.mode = mode;
     $('#modeWheel').setAttribute('aria-checked', String(mode === 'wheel'));
     $('#modeRace').setAttribute('aria-checked', String(mode === 'race'));
+    $('#modeBoard').setAttribute('aria-checked', String(mode === 'board'));
+    if (mode === 'board') { board.render(); boardIdle(); return; }
     $('#spinLabel').textContent = mode === 'wheel' ? 'Spin' : 'Start the race';
     $('#spin').disabled = groups.length < 2;
     if (groups.length < 2) { say('NEEDS 2 GROUPS', 'Roster'); return; }
@@ -124,13 +153,43 @@
     }
   }
   function setMode(m) {
-    if (act !== 'order' || order.length || wheel.busy || race.state === 'count' || race.state === 'run') return;
+    if (act !== 'order' || order.length || wheel.busy || race.state === 'count' || race.state === 'run' || board.busy || !$('#reveal').hidden) return;
+    if (board.editing) { board.edit(false); $('#lbEdit').setAttribute('aria-pressed', 'false'); }
     mode = m; try { localStorage.setItem('rcc-order-mode', m); } catch (e) {}
     applyMode();
     if (m === 'race') race.setup(groups);
+    if (m !== 'board') renderRows();
   }
   $('#modeWheel').addEventListener('click', () => setMode('wheel'));
   $('#modeRace').addEventListener('click', () => setMode('race'));
+  $('#modeBoard').addEventListener('click', () => setMode('board'));
+  // board tools: edit in place; the two destructive ones ask for a second press
+  function shuffleBoard() {
+    if (mode !== 'board' || act !== 'order' || !$('#reveal').hidden || boardPending || landing) return;
+    SFX.unlock(); board.clearWin(); board.shuffle();
+  }
+  $('#lbShuffle').addEventListener('click', e => { e.currentTarget.blur(); shuffleBoard(); });
+  $('#lbEdit').addEventListener('click', e => {
+    const on = board.edit(!board.editing); e.currentTarget.setAttribute('aria-pressed', String(on)); boardIdle();
+  });
+  function armed(btn, label, armedLabel, run) {
+    btn.addEventListener('click', () => {
+      if (board.busy) return;
+      if (btn.classList.contains('arm')) { clearTimeout(btn._t); btn.classList.remove('arm'); btn.textContent = label; run(); return; }
+      btn.classList.add('arm'); btn.textContent = armedLabel;
+      btn._t = setTimeout(() => { btn.classList.remove('arm'); btn.textContent = label; }, 3000);
+    });
+  }
+  armed($('#lbClear'), 'Clear marks', 'Press again to clear', () => { clearTimeout(pendingNext); pendingNext = null; board.clearMarks(); lastMark = null; boardIdle(); });
+  $('#lbCopy').addEventListener('click', e => {
+    const btn = e.currentTarget, date = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    let n = 0;
+    const txt = `Roll Call Board · ${date}\n` + board.marks.map(m => m.kind === 'here' ? `${++n}. ${m.name}` : `   ${m.name} (absent)`).join('\n');
+    (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject())
+      .then(() => { btn.textContent = 'Copied'; setTimeout(() => btn.textContent = 'Copy picks', 1500); })
+      .catch(() => say('CLIPBOARD BLOCKED'));
+  });
+  armed($('#lbRoster'), 'Load roster', 'Press again to replace', () => { clearTimeout(pendingNext); pendingNext = null; board.setNames(rosterNames()); lastMark = null; boardIdle(); });
 
   // the order is set: hold here until the teacher sends it to the crane
   function awaitCrane() {
@@ -140,6 +199,12 @@
   }
   function spin() {
     SFX.unlock();
+    if (mode === 'board') {
+      if (act !== 'order' || board.busy || board.editing || !$('#reveal').hidden || boardPending || landing) return;
+      clearTimeout(pendingNext); pendingNext = null;
+      if (!board.left) { boardIdle(); return; }
+      board.clearWin(); board.pick(); return;
+    }
     if (act !== 'order' || groups.length < 2) return;
     if (orderReady) { orderReady = false; startPlay(); return; }
     if (mode === 'wheel') wheel.spin();
@@ -222,12 +287,12 @@
     pool.addColorStop(0, 'rgba(255,233,196,.6)'); pool.addColorStop(1, 'rgba(255,233,196,0)');
     pg.fillStyle = pool; pg.beginPath(); pg.arc(0, 0, 250, 0, Math.PI * 2); pg.fill(); pg.restore();
     if (can) {
-      const k = Math.min(1, rv.t / 1.1), e = 1 - Math.pow(1 - k, 3);
+      const k = Math.min(1, rv.t * speed / 1.1), e = 1 - Math.pow(1 - k, 3);
       const spin = reduced ? 0 : .5 * (1 - e);
       const sq = rv.squash, w = 200, h = w * (can.h / can.w);
       ART.drawCan(pg, can, 200, 470 - h / 2 * (1 - sq * .7), 0, w, h, { spin, squash: sq, shadow: true, rim: 1 });
     }
-    const g = order[turn] || rv.group, A = g && animalOf(g.animal);
+    const g = mode === 'board' ? null : (order[turn] || rv.group), A = g && animalOf(g.animal);
     if (A) { pg.save(); pg.translate(408, 500); A.draw(pg, { t: rv.t, mode: rv.pose, speed: 1, emotion: 'cheer', look: 0, bib: bibOf(g), scale: 1.45 }); pg.restore(); }
     requestAnimationFrame(paintPortrait);
   }
@@ -237,9 +302,11 @@
     while (el.scrollWidth > maxW && size > 24) { size -= 4; el.style.fontSize = size + 'px'; }
   }
   function showReveal(can) {
-    revealCan = can; rv.can = can; rv.group = order[turn]; rv.t = 0; rv.squash = 0; rv.pose = 'idle';
-    const g = order[turn], [first, last] = ART.splitName(can.name);
-    const grp = $('#rvGroup'); grp.innerHTML = ''; grp.append(badge(g), g.name);
+    revealCan = can; rv.can = can; rv.group = mode === 'board' ? null : order[turn]; rv.t = 0; rv.squash = 0; rv.pose = 'idle';
+    const g = rv.group, [first, last] = ART.splitName(can.name);
+    const grp = $('#rvGroup'); grp.innerHTML = '';
+    if (g) grp.append(badge(g), g.name);
+    else grp.append(`Pick ${board.marks.filter(m => m.kind === 'here').length + 1}`);
     const f = $('#rvFirst'), l = $('#rvLast');
     f.className = ''; l.className = ''; f.style.fontSize = ''; l.style.fontSize = '';
     f.textContent = first; l.textContent = last;
@@ -251,20 +318,21 @@
     fitName(f, maxW); fitName(l, maxW);
     revealAt = performance.now();
     sfx('vacuum', 500);
-    say('IN THE CHUTE', can.name);
-    renderRows();
+    say(mode === 'board' ? 'PICKED' : 'IN THE CHUTE', can.name);
+    if (mode !== 'board') renderRows();
     if (!rv.running) { rv.running = true; rv.last = performance.now(); requestAnimationFrame(paintPortrait); }
-    setTimeout(() => { if (revealCan === can) { f.classList.add('in'); sfx('sting'); rv.pose = 'cheer'; } }, reduced ? 0 : 1100);
-    setTimeout(() => { if (revealCan === can) l.classList.add('in'); }, reduced ? 0 : 1550);
-    setTimeout(() => { if (revealCan === can) $('#rvKeys').classList.add('on'); }, reduced ? 0 : 1800);
+    setTimeout(() => { if (revealCan === can) { f.classList.add('in'); sfx('sting'); rv.pose = 'cheer'; } }, reduced ? 0 : T(1100));
+    setTimeout(() => { if (revealCan === can) l.classList.add('in'); }, reduced ? 0 : T(1550));
+    setTimeout(() => { if (revealCan === can) $('#rvKeys').classList.add('on'); }, reduced ? 0 : T(1800));
   }
   function stamp(text, cls) {
     const st = $('#stamp'); st.textContent = text; st.className = 'stamp ' + cls; void st.offsetWidth; st.classList.add('go');
     sfx('stamp');
   }
-  const canDecide = () => revealCan && !$('#reveal').hidden && performance.now() - revealAt > (reduced ? 200 : 1200);
+  const canDecide = () => revealCan && !$('#reveal').hidden && performance.now() - revealAt > (reduced ? 200 : T(1200));
   function markHere() {
     if (!canDecide()) return;
+    if (mode === 'board') return boardHere();
     const can = revealCan; revealCan = null;
     $('#here').disabled = $('#absent').disabled = true;
     stamp('PRESENT', 'ok'); setTimeout(() => sfx('popTop'), 110);
@@ -273,7 +341,7 @@
     $('#undo').hidden = false;
     const nextG = order[turn + 1];
     say('PRESENT', can.name);
-    const holdMs = 4000;
+    const holdMs = HOLD(4000);
     const nx = $('#rvNext'); nx.innerHTML = '';
     nx.append(nextG ? `Next · ${nextG.name}` : 'Last group');
     const barEl = document.createElement('span'); barEl.className = 'bar'; nx.append(barEl);
@@ -282,6 +350,7 @@
     holdTimer = setTimeout(proceed, holdMs);
   }
   function proceed() {
+    if (mode === 'board') return boardClose();
     clearTimeout(holdTimer); holdTimer = null; holdUntil = 0;
     if (lastMark && lastMark.kind === 'here' && lastMark.turn === turn) lastMark = null;
     rv.running = false; $('#reveal').hidden = true;
@@ -289,6 +358,7 @@
   }
   function markAbsent() {
     if (!canDecide()) return;
+    if (mode === 'board') return boardAbsent();
     const can = revealCan; revealCan = null;
     $('#here').disabled = $('#absent').disabled = true;
     stamp('ABSENT', 'no'); setTimeout(() => sfx('crush'), 90);
@@ -311,11 +381,92 @@
       } else {
         results[turn].none = true; renderRows();
         say('NOBODY HERE', g.name);
-        pendingNext = setTimeout(nextTurn, 2400);
+        pendingNext = setTimeout(nextTurn, T(2400));
       }
-    }, 1300);
+    }, T(1300));
+  }
+  // ---------- board: present, absent, undo ----------
+  function boardHere() {
+    const can = revealCan; revealCan = null;
+    $('#here').disabled = $('#absent').disabled = true;
+    stamp('PRESENT', 'ok'); setTimeout(() => sfx('popTop'), 110);
+    boardPending = { name: can.name, kind: 'here' };
+    lastMark = { kind: 'here', board: true, can };
+    $('#undo').hidden = false;
+    say('PRESENT', can.name);
+    const holdMs = HOLD(3000), nx = $('#rvNext'); nx.innerHTML = '';
+    nx.append(board.left - 1 ? `${board.left - 1} left` : 'All picked');
+    const barEl = document.createElement('span'); barEl.className = 'bar'; nx.append(barEl);
+    barEl.animate([{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }], { duration: holdMs, easing: 'linear', fill: 'forwards' });
+    holdTimer = setTimeout(boardClose, holdMs);
+  }
+  function boardClose() {
+    clearTimeout(holdTimer); holdTimer = null;
+    rv.running = false; $('#reveal').hidden = true;
+    board.clearWin();
+    return landPending().then(boardIdle);
+  }
+  // the card is gone: now the picked tile flies off the board into the tray
+  function landPending() {
+    const p = boardPending;
+    if (!p) return Promise.resolve();
+    boardPending = null; landing = true;
+    $('#spin').disabled = true; $('#lbShuffle').disabled = true;
+    return Promise.resolve(board.mark(p.name, p.kind)).then(() => { landing = false; });
+  }
+  function boardAbsent() {
+    const can = revealCan; revealCan = null;
+    $('#here').disabled = $('#absent').disabled = true;
+    stamp('ABSENT', 'no'); setTimeout(() => sfx('crush'), 90);
+    const t0 = performance.now();
+    const crush = now => { const k = Math.min(1, (now - t0) / 320); rv.squash = .62 * k * k; if (k < 1) requestAnimationFrame(crush); };
+    if (!reduced) requestAnimationFrame(crush); else rv.squash = .62;
+    boardPending = { name: can.name, kind: 'absent' };
+    lastMark = { kind: 'absent', board: true, can };
+    $('#undo').hidden = false;
+    clearTimeout(absentTimer);
+    absentTimer = setTimeout(() => {
+      absentTimer = null;
+      rv.running = false; $('#reveal').hidden = true; board.clearWin();
+      landPending().then(() => {
+        if (board.left) {
+          say('ABSENT', `${board.left} left`);
+          pendingNext = setTimeout(() => { pendingNext = null; if ($('#reveal').hidden && !board.busy && !boardPending && mode === 'board') board.pick(); }, T(700));
+        } else boardIdle();
+      });
+    }, T(1300));
+  }
+  function boardUndo() {
+    const m = lastMark;
+    if (holdTimer && m && m.kind === 'here') {
+      // still on the name: take the mark back and decide again
+      clearTimeout(holdTimer); holdTimer = null;
+      boardPending = null;
+      revealCan = m.can; revealAt = 0; lastMark = null;
+      $('#stamp').className = 'stamp'; $('#rvNext').innerHTML = ''; $('#undo').hidden = true;
+      $('#here').disabled = $('#absent').disabled = false;
+      say('UNDONE', m.can.name);
+      return;
+    }
+    if (absentTimer && m && m.kind === 'absent') {
+      clearTimeout(absentTimer); absentTimer = null;
+      boardPending = null;
+      rv.squash = 0; revealCan = m.can; revealAt = 0; lastMark = null;
+      $('#stamp').className = 'stamp'; $('#undo').hidden = true; $('#here').disabled = $('#absent').disabled = false;
+      say('UNDONE', m.can.name);
+      return;
+    }
+    // otherwise take back the most recent mark on the board (and stop a re-pick that has not started yet)
+    if (board.busy || !$('#reveal').hidden || boardPending || landing) return;
+    clearTimeout(pendingNext); pendingNext = null;
+    const marks = board.marks, lastM = marks[marks.length - 1];
+    if (!lastM) return;
+    lastMark = null;
+    Promise.resolve(board.unmark(lastM.name)).then(boardIdle);
+    say('UNDONE', lastM.name);
   }
   function undo() {
+    if (mode === 'board') return boardUndo();
     const m = lastMark;
     if (!m || m.turn !== turn) return;
     if (m.kind === 'here' && holdTimer) {
@@ -354,6 +505,15 @@
     machine.go();
   }
   $('#start').addEventListener('click', () => { SFX.unlock(); startNow(); });
+  function setSpeed(v) {
+    speed = Math.max(.5, Math.min(3, Math.round(v * 4) / 4));
+    try { localStorage.setItem('rcc-speed', speed); } catch (e) {}
+    $('#speed').value = speed; $('#speedOut').textContent = `${speed}×`;
+    board.setSpeed(speed);
+  }
+  $('#speed').addEventListener('input', e => setSpeed(+e.target.value));
+  $('#speed').addEventListener('change', e => e.target.blur());
+  setSpeed(speed);
   $('#hard').addEventListener('click', e => {
     const on = e.currentTarget.getAttribute('aria-pressed') !== 'true';
     e.currentTarget.setAttribute('aria-pressed', String(on)); e.currentTarget.textContent = `Weak grip: ${on ? 'on' : 'off'}`;
@@ -386,6 +546,11 @@
   $('#again').addEventListener('click', reset);
   $('#copy').addEventListener('click', () => {
     const date = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    if (mode === 'board') {
+      let n = 0;
+      const btxt = `Roll Call Board · ${date}\n` + board.marks.map(m => m.kind === 'here' ? `${++n}. ${m.name}` : `   ${m.name} (absent)`).join('\n');
+      return (navigator.clipboard ? navigator.clipboard.writeText(btxt) : Promise.reject()).catch(() => say('CLIPBOARD BLOCKED'));
+    }
     const txt = `Roll Call Crane · ${date}\n` + order.map((g, i) => {
       const r = results[i] || { absent: [] };
       return `${i + 1}. ${g.name}: ${r.pick || 'nobody here'}${r.absent.length ? ` (absent: ${r.absent.join(', ')})` : ''}`;
@@ -406,9 +571,12 @@
     const lower = k.length === 1 ? k.toLowerCase() : k;
     if (lower === 'f') { toggleFull(); e.preventDefault(); return; }
     if (lower === 'm') { toggleSound(); e.preventDefault(); return; }
+    if (k === '[' || k === '-') { setSpeed(speed - .25); e.preventDefault(); return; }
+    if (k === ']' || k === '=' || k === '+') { setSpeed(speed + .25); e.preventDefault(); return; }
     if (lower === '?') { keys.hidden = false; e.preventDefault(); return; }
     if (lower === 'z' || (k === 'Backspace' && !$('#reveal').hidden)) { undo(); e.preventDefault(); return; }
     if (lower === 'r' && act === 'order' && !order.length) { openRoster(); e.preventDefault(); return; }
+    if (lower === 's' && mode === 'board' && $('#reveal').hidden) { shuffleBoard(); e.preventDefault(); return; }
     if (!$('#reveal').hidden) {
       if (lower === 'p' || lower === 'h') { markHere(); e.preventDefault(); }
       else if (lower === 'a' || lower === 'x') { markAbsent(); e.preventDefault(); }
@@ -428,20 +596,22 @@
   bulbRows.forEach(row => { for (let i = 0; i < 18; i++) row.append(document.createElement('i')); });
   let last = performance.now(), ts = 1, drama = 0, lastCount = 0, beat = 0, lightsDown = false;
   function lightCenter() {
-    const el = act === 'order' ? (mode === 'wheel' ? $('.wheelbox') : $('.racebox')) : $('.glass');
+    const el = act === 'order' ? (mode === 'wheel' ? $('.wheelbox') : mode === 'race' ? $('.racebox') : $('.boardbox')) : $('.glass');
     const r = el.getBoundingClientRect();
     if (!r.width) return;
     body.style.setProperty('--cx', ((r.left + r.width / 2) / innerWidth * 100).toFixed(1) + '%');
     body.style.setProperty('--cy', ((r.top + r.height / 2) / innerHeight * 100).toFixed(1) + '%');
   }
   function frame(now) {
-    const dt = Math.min(.05, (now - last) / 1000); last = now;
+    const rdt = Math.min(.05, (now - last) / 1000); last = now;
+    const dt = rdt * speed;
     let want = 1, d = 0;
     if (act === 'order' && mode === 'wheel') { want = 1 - (wheel.wantSlow || 0); ts += (want - ts) * (1 - Math.exp(-dt * 12)); wheel.step(dt * ts, dt); d = wheel.drama || 0; }
-    else if (act === 'order') { race.step(dt); d = race.drama || 0; ts = race.timeScale ?? 1; }
+    else if (act === 'order' && mode === 'race') { race.step(dt); d = race.drama || 0; ts = race.timeScale ?? 1; }
+    else if (act === 'order') { ts = 1; board.step(dt); d = board.drama; }
     else { ts = 1; machine.frame(dt, dt); d = machine.drama || 0; }
     if (!$('#reveal').hidden) d = 1;
-    drama += (d - drama) * (1 - Math.exp(-dt * 5));
+    drama += (d - drama) * (1 - Math.exp(-rdt * 5));
     body.style.setProperty('--drama', drama.toFixed(3));
     const down = drama > .35;
     if (down !== lightsDown) { lightsDown = down; body.classList.toggle('lightsdown', down); }
@@ -455,7 +625,7 @@
       $('#start').classList.add('ready');
     } else { lastCount = 0; $('#start').classList.remove('ready'); }
     // heartbeat while the camera is close
-    if (drama > .55 && !reduced) { beat += dt * (1.2 + drama * .6); if (beat >= 1) { beat = 0; sfx('heart', drama); } } else beat = .6;
+    if (drama > .55 && !reduced) { beat += rdt * (1.2 + drama * .6); if (beat >= 1) { beat = 0; sfx('heart', drama); } } else beat = .6;
     // bulbs: chase when idle, all on during the countdown, dark during the grab
     const k = Math.floor(now / 140), m = machine.mode;
     const allOn = act === 'play' && m === 'aim', allOff = drama > .5;
@@ -467,6 +637,6 @@
   requestAnimationFrame(frame);
   if (location.hash === '#debug') window.__claw = {
     wheel, race, machine, get act() { return act; }, get mode() { return mode; },
-    tick(n = 60) { for (let i = 0; i < n; i++) { if (act === 'order' && mode === 'wheel') wheel.step(1 / 60, 1 / 60); else if (act === 'order') race.step(1 / 60); else machine.frame(1 / 60, 1 / 60); } },
+    board, tick(n = 60) { for (let i = 0; i < n; i++) { if (act === 'order' && mode === 'wheel') wheel.step(1 / 60, 1 / 60); else if (act === 'order' && mode === 'race') race.step(1 / 60); else if (act === 'order') board.step(1 / 60); else machine.frame(1 / 60, 1 / 60); } },
   };
 })();

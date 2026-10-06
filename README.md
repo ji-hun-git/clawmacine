@@ -13,6 +13,14 @@ Live: https://ji-hun-git.github.io/clawmacine/
 3. **Crane.** The group's animal rides the crane. After a short countdown the crane moves on its own, stops over one can, and drops. Nobody steers it.
 4. **Roll call.** The name takes the whole screen. Press **P** for present or **A** for absent. **Z** undoes the last mark.
 
+## Board mode
+
+A third game, separate from the crane. Every name sits on a tile of a lit board. Press **Light up** (or Space) and a light chases across the tiles, slows down and stops on one name. Mark the student present or absent. Either way the name is marked on the board and sits out every later pick; after an absent mark the lights run again by themselves. **Z** takes back the last mark.
+
+**Shuffle** (or S) moves the tiles to new places with one of five animations picked at random: scatter, swirl, tornado, card flip or rain. It only changes where tiles sit, never the odds. A picked name flies off the board into the **Picked** tray beside it, numbered in order, with absent names listed below; the board closes up around the gap.
+
+Under the board: **Edit names** (type a name on the last tile, or press × on a tile to remove it), **Clear marks**, **Load roster** (replace the board with the roster's names) and **Copy picks**. The board's names and marks are saved in the browser. The winner is drawn uniformly from the names still unmarked before the first light; in a test of 3,200 picks over 16 names every name came up between 183 and 224 times.
+
 ## Keys
 
 | Key | What it does |
@@ -23,7 +31,13 @@ Live: https://ji-hun-git.github.io/clawmacine/
 | F | Full screen |
 | M | Sound on or off |
 | R | Roster (before the order is set) |
+| S | Shuffle the board |
+| [ / ] | Slower / faster |
 | ? | Show the keys |
+
+## Speed
+
+The **Speed** slider in the top-right corner (0.5× to 3×, also [ and ]) speeds up or slows down every game: the wheel, the race, the crane and the board, and the pauses between beats. The time you get to mark a student present or absent never drops below 1.5 seconds.
 
 ## The animals
 
@@ -51,6 +65,7 @@ css/style.css
 js/game.js        director: acts, lighting, reveal, keys, undo
 js/roulette.js    the wheel and its ball physics
 js/race.js        the animal race
+js/board.js       the light board (Board mode)
 js/machine.js     the crane (Matter.js cans, pendulum claw, camera)
 js/art.js         palette and the lit tin can
 js/animals/*.js   the five animals (kit.js is the shared drawing kit)

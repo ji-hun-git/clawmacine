@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Roll Call Crane</title>
-<meta name="description" content="A wheel or an animal race sets the order of the groups. A crane picks one student's can from each group. If that student is absent, the crane picks again.">
+<meta name="description" content="A classroom picker: a wheel or an animal race sets the group order and a crane picks one student per group, or a light board picks names one at a time.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Archivo:wdth,wght@62..125,400..900&display=swap">
@@ -14,12 +14,27 @@
 
 <div class="stage" id="stage" tabindex="-1">
   <section class="act-order" aria-label="Order">
-    <div class="modes" role="radiogroup" aria-label="How the order is set">
+    <div class="modes" role="radiogroup" aria-label="Game">
       <button role="radio" id="modeWheel" aria-checked="true">Wheel</button>
       <button role="radio" id="modeRace" aria-checked="false">Race</button>
+      <button role="radio" id="modeBoard" aria-checked="false">Board</button>
     </div>
     <div class="wheelbox"><canvas id="wheel" width="330" height="330" aria-label="Order wheel"></canvas></div>
     <div class="racebox"><canvas id="race" width="960" height="440" aria-label="Animal race"></canvas></div>
+    <div class="boardbox" id="boardbox" aria-label="Light board">
+      <div class="lb-frame">
+        <div class="lb-bulbs bulbs" aria-hidden="true"></div>
+        <div class="lb-grid" role="list"></div>
+        <div class="lb-plate" aria-hidden="true">ROLL CALL</div>
+      </div>
+      <div class="lb-tools">
+        <button id="lbShuffle">Shuffle <kbd>S</kbd></button>
+        <button id="lbEdit" aria-pressed="false">Edit names</button>
+        <button id="lbClear">Clear marks</button>
+        <button id="lbRoster">Load roster</button>
+        <button id="lbCopy">Copy picks</button>
+      </div>
+    </div>
     <button class="go" id="spin"><span id="spinLabel">Spin</span> <kbd>Space</kbd></button>
   </section>
 
@@ -44,6 +59,14 @@
     <h2 id="listHead">Order</h2>
     <ol class="rows" id="rows"></ol>
     <p class="pool" id="pool"></p>
+  </section>
+
+  <section class="tray" id="lbTray" aria-label="Picked">
+    <div class="tray-plate" aria-hidden="true">PICKED</div>
+    <div class="tray-bed">
+      <div class="tray-list" role="list"></div>
+      <div class="tray-absent-wrap" hidden><div class="tray-sub">Absent</div><div class="tray-absent" role="list"></div></div>
+    </div>
   </section>
 
   <div class="caption" aria-live="polite"><b id="msg">POWER ON</b><span id="sub"></span></div>
@@ -80,6 +103,7 @@
   <button id="openRoster">Roster <span id="rosterCount"></span></button>
   <button id="hard" aria-pressed="false">Weak grip: off</button>
   <button id="sound" aria-pressed="true">Sound: on</button>
+  <label class="speed" for="speed">Speed <input type="range" id="speed" min="0.5" max="3" step="0.25" value="1"> <output id="speedOut">1×</output></label>
   <button id="full">Full screen <kbd>F</kbd></button>
   <button id="keysBtn">Keys <kbd>?</kbd></button>
 </nav>
@@ -87,12 +111,14 @@
 <div class="keys" id="keys" hidden>
   <div class="keys-sheet" role="dialog" aria-label="Keys">
     <dl>
-      <dt>Space</dt><dd>Spin · Start · Next</dd>
+      <dt>Space</dt><dd>Spin · Start · Light up · Next</dd>
+      <dt>S</dt><dd>Shuffle the board</dd>
       <dt>P</dt><dd>Present</dd>
       <dt>A</dt><dd>Absent</dd>
       <dt>Z</dt><dd>Undo</dd>
       <dt>F</dt><dd>Full screen</dd>
       <dt>M</dt><dd>Sound</dd>
+      <dt>[ ]</dt><dd>Slower · faster</dd>
       <dt>R</dt><dd>Roster</dd>
     </dl>
     <button class="go" id="keysClose">Close</button>
@@ -116,7 +142,7 @@
         <button class="btn" id="togglePaste" aria-expanded="false">Paste a list</button>
       </div>
       <div class="paste" id="paste" hidden>
-        <textarea id="pasteText" spellcheck="false" placeholder="Group 1&#10;Minjun Kim&#10;Sojeong Lee&#10;Group 2&#10;JeongSeop Park"></textarea>
+        <textarea id="pasteText" spellcheck="false" placeholder="Group 1&#10;Minjun Kim&#10;Sojeong Lee&#10;Group 2&#10;Jeongseop Park"></textarea>
         <div class="bar">
           <button class="btn go" id="pasteReplace">Replace roster</button>
           <button class="btn" id="pasteAdd">Add to roster</button>
@@ -146,6 +172,7 @@
 <script src="js/animals/pangolin.js"></script>
 <script src="js/roulette.js"></script>
 <script src="js/race.js"></script>
+<script src="js/board.js"></script>
 <script src="js/machine.js"></script>
 <script src="js/roster.js"></script>
 <script src="js/game.js"></script>

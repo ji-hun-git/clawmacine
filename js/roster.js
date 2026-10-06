@@ -4,7 +4,7 @@ window.Roster = (() => {
   const KEY = 'tin-can-roulette-roster-v1';   // old product name, kept so saved rosters survive the rename
   const CLASS_LIST = [
     ['Group 1', ['Minjun Kim', 'Sojeong Lee', 'Hojae Lee', 'Martin Vladimirov Karastoyanov']],
-    ['Group 2', ['JeongSeop Park', 'Fengjian Jiang', 'Helen Ha', 'JIYOUNG LIM']],
+    ['Group 2', ['Jeongseop Park', 'Fengjian Jiang', 'Helen Ha']],
     ['Group 3', ['Han Yin', 'Jua Im', 'Sungjoon Kim', 'Kangeun Lee']],
     ['Group 4', ['Jun Wang', 'Valeriia Lvova', 'Minhyeok Seo', 'Hoyeol Sohn']],
   ];
@@ -18,7 +18,7 @@ window.Roster = (() => {
   const fresh = () => ({ groups: CLASS_LIST.map(([name, m], i) => ({ name, animal: ANIMAL_KEYS[i % ANIMAL_KEYS.length], members: m.map(n => ({ name: n, away: false })) })) });
   const copy = r => JSON.parse(JSON.stringify(r));
   const clean = s => String(s).replace(/^\s*(?:[-*•·–]|\d+[.)])\s+/, '').replace(/[,;]+\s*$/, '').replace(/\s+/g, ' ').trim();
-  const nameOf = s => { const n = clean(s).slice(0, 40); return /\p{L}/u.test(n) ? n : ''; };
+  const nameOf = s => { const n = ART.properName(clean(s)).slice(0, 40); return /\p{L}/u.test(n) && !ART.isRetired(n) ? n : ''; };
 
   // "Group 2", "Team Red", "Group 2: Jun Wang". Korean class-list headers ("2조", "조 2") still parse and become "Group 2".
   const HEAD = /^((?:group|team|grp)(?![a-z])[^:：]*?|\d+\s*(?:조|팀|반)|(?:조|팀)\s*\d+)\s*(?:[:：]\s*(.*))?$/i;
@@ -43,7 +43,8 @@ window.Roster = (() => {
     r.groups = r.groups.map((g, i) => {
       let a = g.animal;
       if (!ANIMAL_KEYS.includes(a)) { a = free(used, i); used.add(a); }
-      return { name: String(g.name == null ? `Group ${i + 1}` : g.name), animal: a, members: (g.members || []).map(m => ({ name: String(m.name), away: !!m.away })) };
+      const members = (g.members || []).filter(m => !ART.isRetired(m.name)).map(m => ({ name: ART.properName(m.name), away: !!m.away }));
+      return { name: String(g.name == null ? `Group ${i + 1}` : g.name), animal: a, members };
     });
     return r;
   }

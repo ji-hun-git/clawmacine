@@ -645,5 +645,11 @@ window.ART = (() => {
   }
   const drawCanFlat = (g, can, x, y, w, h, o) => drawCan(g, can, x, y, 0, w, h, o);
 
-  return { C, GROUP, LABELS, TAU, LIGHT, hash, canStyle, splitName, rr, star, rivet, tinGrad, metalGrad, drawCan, drawCanFlat };
+  // one way to write a name everywhere: every word capitalised, the rest lower case
+  const properName = s => String(s).replace(/\s+/g, ' ').trim().toLowerCase().replace(/(^|[\s'\-])(\p{L})/gu, (m, a, b) => a + b.toUpperCase());
+  // names that have left the class: removed from the defaults and from any roster or board saved in a browser
+  const RETIRED = new Set(['jiyoung lim']);
+  const isRetired = s => RETIRED.has(String(s).replace(/\s+/g, ' ').trim().toLowerCase());
+
+  return { C, GROUP, LABELS, TAU, LIGHT, hash, canStyle, splitName, rr, star, rivet, tinGrad, metalGrad, drawCan, drawCanFlat, properName, isRetired };
 })();
