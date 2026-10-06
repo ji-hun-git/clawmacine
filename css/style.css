@@ -152,6 +152,16 @@ body[data-mode="race"] .modes{top:34px}
 @keyframes namein{from{opacity:0;transform:translateY(.12em)}to{opacity:1;transform:none}}
 .rv-next{margin-top:4vh;font:500 clamp(16px,1.6vw,26px) var(--ui);color:var(--cream-2);min-height:1.3em}
 .rv-next .bar{display:block;height:3px;margin-top:10px;background:var(--mustard);transform-origin:0 50%}
+.rv-go{display:inline-flex;align-items:center;gap:14px;padding:14px 26px;border:2px solid var(--mustard);border-radius:10px;background:rgba(243,178,27,.08);
+  font:700 clamp(18px,1.7vw,28px) var(--ui);color:#f6d68a;animation:goin .35s cubic-bezier(.2,0,0,1) both}
+.rv-go:hover{background:rgba(243,178,27,.18);color:#fff}
+.rv-go kbd{font:600 .62em var(--ui);padding:3px 8px;border:1px solid currentColor;border-radius:5px;opacity:.8}
+@keyframes goin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+/* the curtain between acts: two shutters meet in the middle and part again */
+.curtain{position:fixed;inset:0;z-index:45;pointer-events:none}
+.curtain i{position:absolute;left:0;right:0;height:50.5%;background:linear-gradient(180deg,#0b0908,#16110d);transform:scaleY(0);will-change:transform}
+.curtain i:first-child{top:0;transform-origin:50% 0;box-shadow:inset 0 -3px 0 var(--mustard),0 6px 26px rgba(0,0,0,.6)}
+.curtain i:last-child{bottom:0;transform-origin:50% 100%;box-shadow:inset 0 3px 0 var(--mustard),0 -6px 26px rgba(0,0,0,.6)}
 .rv-keys{position:fixed;right:4vw;bottom:4vh;display:flex;gap:16px;font:700 20px var(--ui);color:var(--cream);opacity:0;transition:opacity .4s}
 .rv-keys.on{opacity:1}
 .rv-keys button{padding:14px 24px;border:2px solid rgba(239,231,210,.55);border-radius:10px;background:rgba(239,231,210,.06);display:inline-flex;align-items:center;gap:10px}

@@ -10,8 +10,10 @@ Live: https://ji-hun-git.github.io/clawmacine/
 2. **Order.** Choose **Wheel** or **Race** on the left.
    - **Wheel:** a steel ball rides the track, drops past the diamonds and rattles into a pocket. The pocket's number is the next group.
    - **Race:** the groups' animals run one lane each. The finishing order is the group order.
-3. **Crane.** The group's animal rides the crane. After a short countdown the crane moves on its own, stops over one can, and drops. Nobody steers it.
-4. **Roll call.** The name takes the whole screen. Press **P** for present or **A** for absent. **Z** undoes the last mark.
+
+   When the order is set, **To the crane** unlocks after a moment, so a spare press of Space cannot skip the order.
+3. **Crane.** The group's animal rides the crane. Every can in the machine wears a **?** label, so nobody can tell whose can is whose. Press **START** (or Space) and a three-count runs; then the crane moves on its own. Before the real grab it plays with one or two other cans: it hovers over one, swats one across the pile, or lifts one and drops it. Nobody steers it.
+4. **Roll call.** The can comes out of the chute still showing **?** and turns round to the name, which takes the whole screen. Press **P** for present or **A** for absent. **Z** undoes the last mark. After present, **Next** (or Space) moves to the next group, whose crane waits for START again. After absent, that student's cans leave and the crane picks again by itself.
 
 ## Board mode
 
@@ -25,7 +27,7 @@ Under the board: **Edit names** (type a name on the last tile, or press × on a 
 
 | Key | What it does |
 |---|---|
-| Space | Spin the wheel, start the race, start the crane now, go to the next group |
+| Space | Spin the wheel, start the race, go to the crane, start the crane (a second press skips the count), next group |
 | P / A | Present / absent |
 | Z | Undo the last mark |
 | F | Full screen |
@@ -59,7 +61,7 @@ The **한국어 / English** button in the top-right switches every control, capt
 
 - **Wheel:** the result comes from the ball physics. In 800 simulated spins with 4 groups, every group came up about equally often.
 - **Race:** the finishing order is drawn uniformly at random before the start. The animals' speed curves are then shaped to arrive in that order, with lead changes and sometimes a photo finish. Re-rolling the curves never changes the order, so no animal is favoured.
-- **Crane:** the crane first draws a student uniformly from the names still in the machine, then aims at that student's most reachable can. Every student has the same number of cans. Physics decides whether the grab holds. The claw may knock a neighbouring can loose, and whatever falls into the chute is the pick.
+- **Crane:** the crane first draws a student uniformly from the names still in the machine, then aims at that student's most reachable can. Every student has the same number of cans. The hovering, swatting and fake grabs come after the draw and never change it. Physics decides whether the grab holds; a miss or a slip tries the same student again. Only the drawn student's can, let go by the claw, counts in the chute; any other can that lands there goes back into the machine.
 
 ## Run it
 

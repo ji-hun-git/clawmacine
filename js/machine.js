@@ -1,9 +1,11 @@
 // The crane. Cans are Matter.js rigid bodies (they stack, topple and clank). The claw hangs from its
 // trolley on a cable and swings as a driven pendulum; its two prongs are kinematic bodies that shove cans
 // aside, and a gripped can hangs on a soft spring. Nobody steers: a short countdown runs while the cans
-// settle, the crane draws a NAME (every name in the machine has the same chance), teases one other
-// student's can, then goes for the drawn student's most reachable can. A miss or a slip retries the same
-// name, so staging and physics never change who gets picked.
+// settle, the crane draws a NAME (every name in the machine has the same chance), plays with one or two
+// other cans (a tease, a swat that knocks one flying, or a grab it lifts and drops), then goes for the drawn
+// student's most reachable can. A miss or a slip retries the same name, so staging and physics never change
+// who gets picked. Inside the machine every can wears a "?" label: the name is shown only on the reveal.
+// The first pick of each group waits for START; the countdown runs after it.
 // Lighting: one warm lamp at upper left front (ART.LIGHT) models every metal part; the trolley lamp throws
 // a cone down into the box and the rest of the interior falls into shadow as the drama rises.
 window.Machine = function (canvas, hooks) {
@@ -37,6 +39,8 @@ window.Machine = function (canvas, hooks) {
   const beat = n => fire('onBeat', n);
   const sfx = (n, v) => fire('sfx', n, v);
   const trace = hooks.trace || (() => {});
+  const smooth = x => { x = Math.max(0, Math.min(1, x)); return x * x * (3 - 2 * x); };
+  let anon = true;                                // the names stay hidden on the cans in the machine
 
   const ctx = canvas.getContext('2d');
   let S = 0, CS = 1, lay = null, visible = true, vis = 0;
@@ -61,7 +65,7 @@ window.Machine = function (canvas, hooks) {
   const c = { x: HOME_X, vx: 0, auto: null, L: L_REST, Lprev: L_REST, th: 0, w: 0, open: .2, mode: 'off', t: 0, age: 0,
     timer: COUNTDOWN, count: 0, contact: 0, cand: null, held: null, con: null, grip: 0, holdAng: 0, plan: [], sub: '',
     name: null, target: null, aimOff: 0, under: null, dropped: null, jolt: 0, jolted: false, slipped: false, tries: 0, ratchet: 0,
-    push: 0, benchT: 0, slips: 0 };
+    push: 0, benchT: 0, slips: 0, armed: false, fake: null };
   let cans = [], pick = null, pickT = 0, live = false, hard = false, rider = null, acc = 0, clock = 0;
   let shake = 0, puffs = [], rev = 0, jig = 0, absentSlow = 0, lamp = .6, dark = .1, drama = 0;
   const cam = { z: 1, x: W / 2, y: H / 2, slow: 1 };
@@ -84,12 +88,15 @@ window.Machine = function (canvas, hooks) {
       collisionFilter: { category: CAT_CAN, mask: MASK_ALL } });
     // spin: each can sits a little turned on its axis, so the pile reads as cylinders, not stickers
     const can = { name, w, h, body, ghost: 0, gone: false, leaving: false, out: false, bench: false, fromClaw: false, ring: 0,
-      spin: (1 + (Math.random() - .5) * .12) % 1, shift: null, turnW: 0, ...canStyle(name) };
+      spin: (1 + (Math.random() - .5) * .12) % 1, shift: null, turnW: 0, ...canStyle(name),
+      anonLabel: Math.random() * ART.LABELS.length | 0, anonCan: null };
     body.plugin.can = can;
     return can;
   }
+  // the face a can shows inside the machine: a question mark on a label that says nothing about whose it is
+  const anonOf = k => k.anonCan || (k.anonCan = { name: '?', label: k.anonLabel, lot: '??', copy: k.copy, body: k.body });
   const setClawCollide = (can, on) => { can.body.collisionFilter.mask = on ? MASK_ALL : MASK_NOCLAW; };
-  function clearCans() { for (const k of cans) if (!k.gone) Composite.remove(world, k.body); cans = []; }
+  function clearCans() { dropFake(); for (const k of cans) if (!k.gone) Composite.remove(world, k.body); cans = []; }
   function fill(names, pour) {
     clearCans(); pick = null; pickT = 0;
     const [w, h] = sizeFor(names.length);
@@ -148,9 +155,7 @@ window.Machine = function (canvas, hooks) {
   const inPile = k => !k.gone && !k.leaving && !k.out && k.body.position.x > CHUTE_W + 6 && k.body.position.y > 0;
   // how much room the claw has around a can: the hub must reach low enough that the prongs close around
   // the can's upper half, before the hub lands on a neighbour or a prong jams against one
-  function reach(k, pool, off = 0) {
-    const p = k.body.position, e = extent(k, 0), top = p.y - e.y, ax = p.x + off;
-    const need = top + .45 * e.y - 72;
+  function hubLimit(k, pool, ax) {
     let lim = FLOOR_Y - 58;
     for (const o of pool) {
       if (o === k) continue;
@@ -158,6 +163,12 @@ window.Machine = function (canvas, hooks) {
       if (u0 < 21) lim = Math.min(lim, oTop - 10);                                           // the hub lands on it
       if (u0 < 54 && u1 > 15) lim = Math.min(lim, oTop - (8 + (Math.min(u1, 52) - 15) * 1.135) + 2); // a prong lands on it
     }
+    return lim;
+  }
+  function reach(k, pool, off = 0) {
+    const p = k.body.position, e = extent(k, 0), top = p.y - e.y, ax = p.x + off;
+    const need = top + .45 * e.y - 72;
+    const lim = hubLimit(k, pool, ax);
     let s = lim - need - Math.abs(off) * .4;
     if (ax < CHUTE_W + 24 || ax > W - 24) s -= 12;
     if (e.x > 44) s -= 60;                                            // lying across, too wide for the prongs
@@ -194,10 +205,20 @@ window.Machine = function (canvas, hooks) {
     for (const k of cans) k.fromClaw = false;
     if (!retry || !c.name || !names.includes(c.name)) { c.name = names[Math.random() * names.length | 0]; c.tries = 0; c.slips = 0; }
     else c.tries++;
-    c.target = bestCan(c.name); c.plan = []; c.slipped = false;
+    c.target = bestCan(c.name); c.plan = []; c.slipped = false; dropFake();
     if (!retry && names.length > 1) {
-      const d = decoyFor(c.target);
-      if (d) c.plan.push({ can: d, x: d.body.position.x, hold: .7 + Math.random() * .2, arrived: false });
+      // theatre only, the name is already drawn: a tease, a swat that knocks a can flying, or a grab that
+      // lifts someone else's can and lets it fall
+      const legs = Math.random() < .45 ? 2 : 1, used = new Set();
+      for (let i = 0; i < legs; i++) {
+        let d = null;
+        for (let tries = 0; tries < 5 && (!d || used.has(d)); tries++) d = decoyFor(c.target);
+        if (!d || used.has(d)) break;
+        used.add(d);
+        const r = Math.random(), kind = calm() ? 'tease' : r < .4 ? 'slap' : r < .75 ? 'fake' : 'tease';
+        const hold = kind === 'slap' ? 1.25 : kind === 'fake' ? 2.3 : .7 + Math.random() * .2;
+        c.plan.push({ can: d, x: d.body.position.x, hold, kind, arrived: false, done: false, loose: false });
+      }
     }
     c.sub = c.plan.length ? 'wander' : 'approach';
     trace('start', { name: c.name, retry: !!retry, decoy: c.plan.length });
@@ -250,6 +271,85 @@ window.Machine = function (canvas, hooks) {
     if (!c.slipped) { beat('miss'); fire('onMiss'); }
     letGo(); startPick(true);
   }
+  // ---------- the show before the pick ----------
+  function startLeg(leg) {
+    const k = leg.can, e = extent(k, 0), top = k.body.position.y - e.y, pool = cans.filter(inPile);
+    const lim = hubLimit(k, pool, leg.x) - CARR_Y;
+    leg.dir = Math.sign(k.body.position.x - (c.target ? c.target.body.position.x : W / 2)) || (k.body.position.x < W * .55 ? 1 : -1);
+    if (leg.kind === 'slap') leg.L = clamp(Math.min(lim, top - 60 - CARR_Y), L_REST, L_MAX * .85);
+    else if (leg.kind === 'fake') {
+      leg.L = clamp(Math.min(lim, top + .45 * e.y - 66 - CARR_Y), L_REST, L_MAX * .9);
+      leg.Lup = Math.max(L_REST, leg.L - 92);
+      const need = Math.asin(clamp((e.x + 1 - PIV) / PL, 0, 1));
+      leg.stop = clamp((need - .1) / .62, 0, 1);
+      setClawCollide(k, false);                     // the prongs close round it instead of knocking it away
+    }
+    trace('leg', { kind: leg.kind, th: c.th, cx: c.x, lx: leg.x, kx: k.body.position.x });
+    beat(leg.kind === 'tease' ? 'tease' : 'dip'); sfx('clack');
+  }
+  function endLeg() {
+    const leg = c.plan.shift();
+    if (leg && leg.kind === 'fake') { dropFake(); if (!leg.can.gone) leg.can.ghost = Math.max(leg.can.ghost, .45); }
+    c.sub = c.plan.length ? 'wander' : 'approach'; c.age = 0; beat('leave');
+    c.target = bestCan(c.name);                   // re-pick the drawn name's most reachable can
+  }
+  // a swat: down to the can's top, a swing that knocks it across the pile, back up
+  function slapLeg(leg, u) {
+    const down = u < .3 ? smooth(u / .3) : u < .42 ? 1 : 1 - smooth((u - .42) / .58);
+    c.L = L_REST + (leg.L - L_REST) * down; cable();
+    c.open = .25 + down * .35;
+    if (!leg.wound && u > .2) { leg.wound = true; c.w -= leg.dir * .35; }
+    if (!leg.done && u > .3) {
+      leg.done = true; leg.loose = true;
+      const k = leg.can, b = k.body, { hx, hy, a } = pose();
+      c.w += leg.dir * .8;
+      Body.setVelocity(b, { x: leg.dir * (4 + Math.random() * 3), y: -(5 + Math.random() * 3) });
+      Body.setAngularVelocity(b, leg.dir * (.18 + Math.random() * .16));
+      k.ring = .5; shake = Math.max(shake, 7); lamp = 1.35; jig = .25;
+      spark(hx + leg.dir * PL * Math.sin(a), hy + 8 + PL * Math.cos(a), 10);
+      sfx('clank', 10); sfx('gasp'); beat('slap');
+    }
+  }
+  // a fake: closes round someone else's can, lifts it, shakes it loose and lets it fall
+  function fakeLeg(leg, u) {
+    const k = leg.can;
+    if (u < .3) { c.L = L_REST + (leg.L - L_REST) * smooth(u / .3); c.open += (.95 - c.open) * .12; }
+    else if (u < .42) {
+      c.L = leg.L; c.open = .95 - (.95 - leg.stop) * smooth((u - .3) / .12);
+      if (!leg.done && u > .4) {
+        leg.done = true;
+        const { hx, hy, phi } = pose(), e = extent(k, phi), o = rot(0, 10 + e.y, phi), A = { x: hx + o.x, y: hy + o.y };
+        const gap = Math.hypot(k.body.position.x - A.x, k.body.position.y - A.y);
+        trace('fake', { gap, L: leg.L, ey: e.y, dx: k.body.position.x - hx, th: c.th, cx: c.x, lx: leg.x, kx: k.body.position.x });
+        if (gap < 60) {
+          c.fake = { k, ey: e.y, con: Constraint.create({ pointA: A, bodyB: k.body, pointB: { x: 0, y: 0 }, length: 0, stiffness: .2, damping: .08 }) };
+          Composite.add(world, c.fake.con);
+          sfx('clunk'); beat('grip');
+        } else beat('empty');
+      }
+    } else if (u < .7) { c.L = leg.L + (leg.Lup - leg.L) * smooth((u - .42) / .26); c.open = leg.stop; }
+    else {
+      if (!leg.loose) {
+        leg.loose = true;
+        const held = !!c.fake; dropFake();
+        c.w += (Math.random() < .5 ? -1 : 1) * 1.1; c.open = .75; shake = Math.max(shake, held ? 4 : 2);
+        if (held) { k.ring = .4; sfx('clank', 6); sfx('gasp'); beat('fumble'); }
+      }
+      c.L = leg.Lup + (L_REST - leg.Lup) * smooth((u - .7) / .3);
+      c.open += (.3 - c.open) * .06;
+    }
+    cable();
+    if (c.fake) {
+      const { hx, hy, phi } = pose(), o = rot(0, 10 + c.fake.ey, phi);
+      c.fake.con.pointA = { x: hx + o.x, y: hy + o.y };
+    }
+  }
+  function dropFake() {
+    if (!c.fake) return;
+    Composite.remove(world, c.fake.con);
+    c.fake.k.ghost = Math.max(c.fake.k.ghost, .45);
+    c.fake = null;
+  }
   function setMode(m) { c.mode = m; c.t = 0; c.age = 0; if (m === 'lower') c.jolted = false; }
 
   // ---------- simulation ----------
@@ -269,7 +369,7 @@ window.Machine = function (canvas, hooks) {
     // driven pendulum with a changing cable length: it swings when the trolley speeds up or brakes,
     // and paying out cable (dL/dt > 0) bleeds off swing, as angular momentum is conserved
     const Lp = (c.L - c.Lprev) / dt; c.Lprev = c.L;
-    const hold = m === 'seek' && (c.sub === 'lock' || (c.plan[0] && c.plan[0].arrived));
+    const hold = m === 'seek' && (c.sub === 'lock' || (c.plan[0] && c.plan[0].arrived && !c.plan[0].loose));
     const damp = DAMP * (m === 'lower' || m === 'close' ? 2 : hold ? 4 : 1);
     const alpha = -(G / c.L) * Math.sin(c.th) - (a / c.L) * Math.cos(c.th) - (2 * Lp / c.L) * c.w - damp * c.w;
     c.w += alpha * dt; c.th = clamp(c.th + c.w * dt, -.6, .6);
@@ -282,6 +382,7 @@ window.Machine = function (canvas, hooks) {
         break;
       case 'aim': {
         relax(.2);
+        if (!c.armed) break;
         c.timer -= dt;
         const n = Math.ceil(c.timer / (COUNTDOWN / 3) - 1e-6);
         if (n !== c.count && n > 0 && n <= 3) { c.count = n; beat('count' + n); sfx('tickLow'); rev = .18; jig = .15; lamp = 1.25; }
@@ -294,22 +395,32 @@ window.Machine = function (canvas, hooks) {
           c.target = bestCan(c.name);
         }
         const leg = c.plan[0];
+        if (c.L > L_REST + .5 && !(leg && leg.arrived)) {
+          // a show leg cut short: wind the claw back up before the trolley moves on
+          c.L = Math.max(L_REST, c.L - VRAISE * dt); cable(); c.auto = c.x; relax(.2); break;
+        }
         if (leg) {
-          relax(.2);
-          if (leg.can.gone || leg.can.leaving) { c.plan.shift(); break; }
+          if (leg.kind === 'tease' || !leg.started) relax(.2);
+          if (leg.can.gone || leg.can.leaving || leg.can.out) { endLeg(); break; }
           if (!leg.arrived) leg.x = leg.can.body.position.x;
           c.auto = clamp(leg.x, SEEK_X0, X_MAX);
           if (!leg.arrived) {
-            if (Math.abs(c.auto - c.x) < 3 && Math.abs(c.vx) < 30) { leg.arrived = true; c.t = 0; beat('tease'); }
-          } else {
-            // the tease: stop over someone else's can, lamp steady, prongs flex as if about to drop
+            if (Math.abs(c.auto - c.x) < 3 && Math.abs(c.vx) < 30) { leg.arrived = true; c.t = 0; if (leg.kind === 'tease') { leg.started = true; startLeg(leg); } }
+          } else if (!leg.started) {
+            // the claw stops swinging before it goes down
             c.t += dt;
-            const f = clamp((c.t - leg.hold * .35) / .3, 0, 1);
-            c.open = .2 + Math.sin(f * Math.PI) * .2;
-            if (c.t > leg.hold) {
-              c.plan.shift(); c.sub = 'approach'; beat('leave');
-              c.target = bestCan(c.name);                 // re-pick the drawn name's most reachable can
+            if ((Math.abs(c.th) < .08 && Math.abs(c.w) < .5) || c.t > .6) { leg.started = true; c.t = 0; startLeg(leg); }
+          } else {
+            c.t += dt;
+            const u = c.t / leg.hold;
+            if (leg.kind === 'slap') slapLeg(leg, u);
+            else if (leg.kind === 'fake') fakeLeg(leg, u);
+            else {
+              // the tease: stop over someone else's can, lamp steady, prongs flex as if about to drop
+              const f = clamp((c.t - leg.hold * .35) / .3, 0, 1);
+              c.open = .2 + Math.sin(f * Math.PI) * .2;
             }
+            if (c.t > leg.hold) endLeg();
           }
         } else {
           relax(.2);
@@ -453,6 +564,7 @@ window.Machine = function (canvas, hooks) {
     for (const k of cans) {
       if (k.gone || k.leaving || k.out || k.name !== name) continue;
       if (c.held === k) letGo();
+      if (c.fake && c.fake.k === k) dropFake();
       k.leaving = true; k.bench = true; k.body.collisionFilter.mask = 0; k.body.frictionAir = 0;
       Body.setVelocity(k.body, { x: (Math.random() - .5) * 5, y: -25 - Math.random() * 4 });
       Body.setAngularVelocity(k.body, (Math.random() - .5) * .5);
@@ -740,7 +852,7 @@ window.Machine = function (canvas, hooks) {
     mg.setTransform(1, 0, 0, 1, 0, 0); mg.clearRect(0, 0, cv.width, cv.height); mg.setTransform(1 / 3, 0, 0, 1 / 3, 0, 0);
     for (const k of cans) {
       if (k.gone) continue;
-      const b = k.body, L = LB[k.label] || {}, w = k.w * f, h = k.h * f;
+      const b = k.body, L = LB[anon ? k.anonLabel : k.label] || {}, w = k.w * f, h = k.h * f;
       mg.save(); mg.translate(mx(b.position.x), my(b.position.y)); mg.rotate(b.angle);
       mg.fillStyle = L.bg || '#8f969e'; mg.fillRect(-w / 2, -h / 2, w, h);
       const cy = mg.createLinearGradient(-w / 2, 0, w / 2, 0);
@@ -819,7 +931,7 @@ window.Machine = function (canvas, hooks) {
     const cf = coneAt(b.position.x, b.position.y), lit = 1 - dark * (1 - cf) * .3;
     const o = { lit, rim: k === c.held ? zr : zr * cf * .7 };
     if (k.shift != null) o.labelShift = k.shift; else o.spin = k.spin;
-    drawCan(g, k, b.position.x, b.position.y, b.angle + wob, k.w, k.h, o);
+    drawCan(g, anon ? anonOf(k) : k, b.position.x, b.position.y, b.angle + wob, k.w, k.h, o);
   }
   // ---------- drawing: the claw assembly ----------
   // Modelled the way the roulette's turret is: the one lamp (ART.LIGHT) on every part, round parts seen a
@@ -1464,10 +1576,19 @@ window.Machine = function (canvas, hooks) {
     // copies: identical cans per student, the same count for everyone, so the odds stay equal
     play(names, label, copies = 1) {
       live = true; letGo(); c.auto = null; c.plan = []; c.name = null; c.target = null;
-      fill(names.flatMap(n => Array(Math.max(1, copies | 0)).fill(n)), true); setMode('load'); c.timer = COUNTDOWN;
+      fill(names.flatMap(n => Array(Math.max(1, copies | 0)).fill(n)), true); setMode('load'); c.timer = COUNTDOWN; c.armed = false;
     },
-    resume() { pick = null; pickT = 0; letGo(); c.auto = null; c.plan = []; c.name = null; c.target = null; c.count = 0; setMode('aim'); c.timer = COUNTDOWN; },
-    go() { if (c.mode === 'aim') c.timer = 0; },
+    resume() { pick = null; pickT = 0; letGo(); dropFake(); c.auto = null; c.plan = []; c.name = null; c.target = null; c.count = 0; setMode('aim'); c.timer = COUNTDOWN; c.armed = true; },
+    // START: the first press starts the countdown (pressed during the pour, it starts once the cans land); a second press skips it
+    go() {
+      if (c.mode === 'load') { c.armed = true; return true; }
+      if (c.mode !== 'aim') return false;
+      if (!c.armed) { c.armed = true; c.timer = COUNTDOWN; } else c.timer = 0;
+      return true;
+    },
+    get armed() { return !!c.armed; },
+    get claw() { return { x: c.x, th: c.th, L: c.L, open: c.open }; },
+    setAnon(v) { anon = !!v; },
     removeStudent,
     restoreStudent,
     students() { return new Set(inPlay().map(k => k.name)).size; },
