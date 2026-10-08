@@ -13,6 +13,8 @@ window.Board = function (box, hooks, tray) {
 
   let names = [], marks = [], editing = false, busy = false, shuffling = false, drama = 0, dramaTo = 0, cols = 1, timers = [];
   let lastStyle = '', speed = 1;           // speed: the game-speed slider, 0.5 to 3
+  let pend = null, shuf = null;            // the pick and the shuffle in progress, for skip()
+  const anims = new Set(), flying = new Set();   // tile animations still running; marks in the air, by their landing
   const markOf = n => marks.find(m => m.name === n);
   const eligible = () => names.filter(n => !markOf(n));
 
@@ -139,6 +141,9 @@ window.Board = function (box, hooks, tray) {
     grid.querySelectorAll('.tile[data-name]').forEach(t => m.set(t.dataset.name, { x: t.offsetLeft, y: t.offsetTop, w: t.offsetWidth, h: t.offsetHeight }));
     return m;
   }
+  // every animation is kept until it settles, so skip() can finish it
+  const track = a => { anims.add(a); const f = a.finished.catch(() => {}); f.then(() => anims.delete(a)); return f; };
+  const settle = () => { anims.forEach(a => { try { a.finish(); } catch (e) { a.cancel(); } }); anims.clear(); };
   function animateTo(change, style) {
     const before = snapshot();
     change();
@@ -150,7 +155,7 @@ window.Board = function (box, hooks, tray) {
       const a = before.get(t.dataset.name), b = { x: t.offsetLeft, y: t.offsetTop, w: t.offsetWidth, h: t.offsetHeight };
       if (!a) {          // a tile that was not on the board before: pop in
         t.style.transformOrigin = '50% 50%';
-        return t.animate([{ opacity: 0, transform: 'scale(.6)' }, { opacity: 1, transform: 'none' }], { duration: 380 / speed, delay: 120 / speed, easing: 'cubic-bezier(.2,1.4,.4,1)', fill: 'backwards' }).finished.catch(() => {});
+        return track(t.animate([{ opacity: 0, transform: 'scale(.6)' }, { opacity: 1, transform: 'none' }], { duration: 380 / speed, delay: 120 / speed, easing: 'cubic-bezier(.2,1.4,.4,1)', fill: 'backwards' }));
       }
       const dx = a.x - b.x, dy = a.y - b.y, sx = a.w / b.w, sy = a.h / b.h;
       // a re-flow changes tile sizes, so it scales from the corner; a shuffle keeps sizes and spins about the centre
@@ -159,7 +164,7 @@ window.Board = function (box, hooks, tray) {
       const k = keyframes(style, { t, idx, a, b, dx, dy, start, gw, gh, cx, cy });
       const opts = { ...k.opts, duration: k.opts.duration / speed, delay: (k.opts.delay || 0) / speed };
       longest = Math.max(longest, opts.duration + opts.delay);
-      return t.animate(k.frames, { fill: 'backwards', ...opts }).finished.catch(() => {});
+      return track(t.animate(k.frames, { fill: 'backwards', ...opts }));
     });
     return Promise.all(jobs).then(() => tiles.forEach(t => { t.style.transformOrigin = ''; }));
   }
@@ -226,10 +231,11 @@ window.Board = function (box, hooks, tray) {
     // finish on the animations, or after 2.8 s at the latest, so a paused or throttled tab can never jam the board
     let finished = false;
     const finish = () => {
-      if (finished) return; finished = true;
+      if (finished) return; finished = true; if (shuf === finish) shuf = null;
       shuffling = false; dramaTo = 0; sfx('clack');
       hooks.onShuffled && hooks.onShuffled();
     };
+    shuf = finish;
     animateTo(() => render(), style).then(finish);
     timers.push(setTimeout(finish, 2800 / speed));
     return style;
@@ -244,7 +250,7 @@ window.Board = function (box, hooks, tray) {
     }
     return out;
   }
-  function stopAll() { timers.forEach(clearTimeout); timers = []; }
+  function stopAll() { timers.forEach(clearTimeout); timers = []; pend = shuf = null; }
   function pick() {
     if (busy || shuffling || editing) return false;
     const live = eligible();
@@ -268,6 +274,7 @@ window.Board = function (box, hooks, tray) {
     busy = true; dramaTo = .15;
     hooks.onStart && hooks.onStart();
     const tiles = [...grid.querySelectorAll('.tile[data-name]')];
+    const pk = pend = { win, el: tiles[winI], tiles, rung: false };
     let t = 0;
     route.forEach((ti, k) => {
       const p = k / (route.length - 1);
@@ -280,8 +287,8 @@ window.Board = function (box, hooks, tray) {
         const trail = tiles[route[k - 1]]; if (trail) { trail.classList.add('trail'); setTimeout(() => trail.classList.remove('trail'), 260 / speed); }
         dramaTo = .15 + p * .8;
         if (k === route.length - 1) {
-          el.classList.add('win'); sfx('ding');
-          timers.push(setTimeout(() => { busy = false; dramaTo = 0; hooks.onPick && hooks.onPick(win); }, (reduced ? 200 : 1100) / speed));
+          el.classList.add('win'); sfx('ding'); pk.rung = true;
+          timers.push(setTimeout(() => { busy = false; dramaTo = 0; pend = null; hooks.onPick && hooks.onPick(win); }, (reduced ? 200 : 1100) / speed));
         } else sfx('tick', .5 + p);
       }, t));
     });
@@ -295,9 +302,9 @@ window.Board = function (box, hooks, tray) {
     marks = marks.filter(m => m.name !== name); marks.push({ name, kind });
     save();
     const done = animateTo(() => render(), 'reflow');
-    if (!ghost || !tray) return done;
+    if (!ghost || !tray) return reduced ? done : aloft(done);
     const target = [...tray.querySelectorAll('.tile')].find(t => t.dataset.name === name);
-    if (!target) return done;
+    if (!target) return aloft(done);
     const bed = tray.querySelector('.tray-bed');
     if (bed) { const tr = target.getBoundingClientRect(), br = bed.getBoundingClientRect(); if (tr.bottom > br.bottom || tr.top < br.top) bed.scrollTop += tr.top - br.top - 8; }
     const to = target.getBoundingClientRect();
@@ -314,8 +321,14 @@ window.Board = function (box, hooks, tray) {
       { transform: `translate(${dx * .45}px,${lift}px) rotate(${rnd(-14, 14)}deg) scale(1.08)`, offset: .45 },
       { transform: `translate(${dx}px,${dy}px) scale(${sx},${sy})` }], { duration: 950 / speed, easing: 'cubic-bezier(.45,0,.2,1)', fill: 'forwards' });
     sfx('whoosh');
-    return fly.finished.catch(() => {}).then(() => { ghost.remove(); target.style.visibility = ''; target.classList.add('landed'); sfx('clack'); });
+    let down = false;
+    const land = () => { if (down) return; down = true; ghost.remove(); target.style.visibility = ''; target.classList.add('landed'); sfx('clack'); };
+    const landed = track(fly).then(land);
+    aloft(landed, land);
+    return landed;
   }
+  // a mark can be skipped until it lands (a skip also snaps the reflow)
+  function aloft(p, land = () => {}) { flying.add(land); p.then(() => flying.delete(land)); return p; }
   function unmark(name) {
     const i = marks.map(m => m.name).lastIndexOf(name);
     if (i >= 0) marks.splice(i, 1);
@@ -323,12 +336,31 @@ window.Board = function (box, hooks, tray) {
   }
   function clearWin() { grid.querySelectorAll('.tile').forEach(el => el.classList.remove('lit', 'win', 'trail')); }
 
+  // ---------- skip: end what is playing now with the result it already has ----------
+  // the pick's winner and the shuffle's order are drawn before their animations, so skipping never touches the odds
+  function skip() {
+    const p = busy && pend, f = shuffling && shuf, lands = [...flying];
+    if (!p && !f && !lands.length) return false;
+    if (p) {
+      stopAll(); p.tiles.forEach(el => el.classList.remove('lit', 'trail'));
+      if (p.el) p.el.classList.add('lit', 'win');
+      if (!p.rung) sfx('ding');
+      busy = false; dramaTo = 0; pend = null;
+      hooks.onPick && hooks.onPick(p.win);
+    }
+    if (f || lands.length) settle();
+    if (f) { stopAll(); f(); }
+    lands.forEach(l => { flying.delete(l); l(); });
+    return true;
+  }
+
   let rt = null;
   addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { if (box.offsetParent && !busy && !shuffling) render(); }, 150); });
 
   return {
     load(fallback) { load(fallback); render(); },
-    render, pick, shuffle, mark, unmark, clearWin,
+    render, pick, shuffle, mark, unmark, clearWin, skip,
+    get canSkip() { return !!(busy && pend) || !!(shuffling && shuf) || flying.size > 0; },
     clearMarks() { stopAll(); busy = false; shuffling = false; dramaTo = 0; marks = []; save(); return animateTo(() => render(), 'reflow'); },
     setNames(list) { stopAll(); busy = false; names = [...new Set(list.map(clean).filter(Boolean))]; marks = []; save(); render(); },
     // the roster changed: take its names, keep the marks of names that are still there

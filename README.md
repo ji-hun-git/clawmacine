@@ -28,6 +28,7 @@ Under the board: **Edit names** (type a name on the last tile, or press × on a 
 | Key | What it does |
 |---|---|
 | Space | Spin the wheel, start the race, go to the crane, start the crane (a second press skips the count), next group |
+| K | Skip what is playing |
 | P / A | Present / absent |
 | Z | Undo the last mark |
 | F | Full screen |
@@ -36,6 +37,10 @@ Under the board: **Edit names** (type a name on the last tile, or press × on a 
 | S | Shuffle the board |
 | [ / ] | Slower / faster |
 | ? | Show the keys |
+
+## Skip
+
+While something plays, a **Skip** button appears (or press **K**). In the order games it takes the place of the main button; in the crane it sits under the caption. It ends the spin, the race, the light chase, a shuffle or the crane's hunt at once, shows the result it was going to give, and stops at the next thing you decide: the next spin, ORDER SET, the name card with Present and Absent ready, or the next group's START. Skip never changes the odds: the race order, the board's pick and the crane's student are drawn before the animation starts, and a skipped wheel spin runs the same ball physics to the end without drawing it. Pressed while the crane waits for START, Skip starts it and goes straight to the pick.
 
 ## Speed
 

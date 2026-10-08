@@ -86,6 +86,10 @@ window.Race = function (canvas, hooks) {
   function say(text) { line = text; lineT = 0; hooks.onLine && hooks.onLine(text); }
   const kindOf = r => (animals()[r.key] || { name: r.key }).name;
   const nameOf = r => `${r.grp.name} (${kindOf(r)})`;
+  function hail(r) {
+    const L = window.I18N, gap = racers.length > 1 ? TOF(1) - r.T : 1;
+    say(gap < .16 ? (L ? L.t('race.photo', { name: nameOf(r) }) : `Photo finish · ${nameOf(r)}`) : (L ? L.t('race.wins', { name: nameOf(r) }) : `${nameOf(r)} wins`));
+  }
   const ORD = n => n + (n % 10 === 1 && n % 100 !== 11 ? 'st' : n % 10 === 2 && n % 100 !== 12 ? 'nd' : n % 10 === 3 && n % 100 !== 13 ? 'rd' : 'th');
 
   // ---------- projection ----------
@@ -703,15 +707,18 @@ window.Race = function (canvas, hooks) {
       r.speed = clamp(v / (TL / 8.8), .15, 1.6);
       if (state === 'run' && nx > r.x + .01 && !reduced) spray(r, i, sdt, a0);
       r.x = nx;
-      if (!r.place && t >= r.T) {
-        crossed.push(i); r.place = crossed.length; r.pose = r.place === 1 ? 'cheer' : 'idle';
-        if (r.place === 1) {
-          flash = reduced ? 0 : 1; freeze = reduced ? 0 : .7; sfx('drum', 0); sfx('shutter');
-          const gap = racers.length > 1 ? T1 - r.T : 1;
-          { const L = window.I18N; say(gap < .16 ? (L ? L.t('race.photo', { name: nameOf(r) }) : `Photo finish · ${nameOf(r)}`) : (L ? L.t('race.wins', { name: nameOf(r) }) : `${nameOf(r)} wins`)); }
-          sfx('crowd');
+      // places go in the drawn order, so two noses over the line in one long frame cannot swap
+      if (!r.place && t >= r.T) for (const j of finishOrder) {
+        const q = racers[j];
+        if (!q.place) {
+          crossed.push(j); q.place = crossed.length; q.pose = q.place === 1 ? 'cheer' : 'idle';
+          if (q.place === 1) {
+            flash = reduced ? 0 : 1; freeze = reduced ? 0 : .7; sfx('drum', 0); sfx('shutter');
+            hail(q); sfx('crowd');
+          }
+          if (crossed.length === racers.length) { state = 'done'; doneT = 0; }
         }
-        if (crossed.length === racers.length) { state = 'done'; doneT = 0; }
+        if (q === r) break;
       }
       if (r.place > 1 && t > r.T + 1.2) r.pose = r.place === racers.length ? 'worry' : 'idle';
     });
@@ -748,6 +755,28 @@ window.Race = function (canvas, hooks) {
     draw();
     if (rec.on && (t >= Math.max(TN + .35, rec.t0 + 2.6) || rec.x <= 0)) { rec.on = false; rec.done = true; develop(); }
   }
+  // skip: the order was drawn before the gun, so jump to the end of this race. A print already made stays;
+  // a strip still recording is dropped rather than developed half-way
+  const skippable = () => state === 'count' || state === 'run' || (state === 'done' && !finished);
+  function skip() {
+    if (!skippable()) return false;
+    const n = racers.length, hailed = crossed.length > 0;
+    if (state !== 'done') { state = 'done'; doneT = 0; }
+    finished = true; saidNear = true; t = Math.max(t, TOF(n - 1) + 2);
+    sfx('drum', 0); hooks.roll && hooks.roll(0);
+    finishOrder.forEach(i => { if (!racers[i].place) { crossed.push(i); racers[i].place = crossed.length; } });
+    racers.forEach(r => {
+      r.x = posAt(r, t); r.speed = clamp((r.x - posAt(r, t - .05)) / .05 / (TL / 8.8), .15, 1.6);
+      r.pose = r.place === 1 ? 'cheer' : r.place === n ? 'worry' : 'idle';
+    });
+    if (!hailed) { hail(racers[crossed[0]]); sfx('crowd'); }
+    lineT = Math.max(lineT, 1); flash = 0; freeze = 0; gray = 0; cam.slow = 1; dust = []; drops = []; wet = [];
+    if (print) printT = Math.max(printT, .6); else { rec.on = false; rec.done = true; }
+    cam.x = FINISH_X + 110; cam.z = reduced ? 1 : 1.08; cam.fy = TRACK_MID - 10; drama = print ? .75 : .55;
+    hooks.onFinish && hooks.onFinish(finishOrder.map(i => racers[i].grp));
+    draw();
+    return true;
+  }
 
   fit();
   return {
@@ -764,6 +793,8 @@ window.Race = function (canvas, hooks) {
     },
     start() { if (state !== 'ready') return; state = 'count'; count = 2.4; sfx('tickLow'); racers.forEach(r => r.pose = 'worry'); say(''); },
     step,
+    skip,
+    get canSkip() { return skippable(); },
     get state() { return state; },
     get drama() { return clamp(drama, 0, 1); },
     get timeScale() { return freeze > 0 ? .01 : cam.slow; },

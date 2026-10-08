@@ -22,6 +22,11 @@
   // the crane waits for the teacher: after the order is set (a short lockout so a spare Space cannot skip it),
   // before each group's countdown (START), and after PRESENT (Next)
   let craneAt = 0, toCrane = false, nextReady = false, nextAt = 0, curtainTok = 0, flashUntil = 0;
+  // beats that wait on a timer (a result settling, the name card coming in, an absent can leaving): Skip runs them now
+  const pend = new Map();
+  function later(fn, ms) { const id = setTimeout(() => { pend.delete(id); fn(); }, ms); pend.set(id, fn); return id; }
+  function cancel(id) { if (id) { clearTimeout(id); pend.delete(id); } }
+  const modalEl = $('#modal'), revealEl = $('#reveal');
   // game speed (the slider): scales physics, animation and the gaps between beats; holds for calling a name stay readable
   let speed = 1;
   try { speed = Math.max(.5, Math.min(3, +localStorage.getItem('rcc-speed') || 1)); } catch (e) {}
@@ -65,12 +70,12 @@
       const g = remaining[gi];
       wheel.lock(true); sfx('ding'); settling = true;
       say(t('s.place', { ord: ord(order.length), name: upper(short(g.name)) }));
-      setTimeout(() => {
+      later(() => {
         if (mode !== 'wheel' || act !== 'order') { settling = false; return; }
         remaining.splice(gi, 1); order.push(g); renderRows(order.length - 1);
         if (remaining.length === 1) {
           const last = remaining.pop();
-          setTimeout(() => {
+          later(() => {
             settling = false;
             if (mode !== 'wheel' || act !== 'order') return;
             order.push(last); wheel.setGroups([]); renderRows(order.length - 1);
@@ -184,8 +189,8 @@
     race.setup(groups);
   }
   function reset() {
-    clearTimeout(holdTimer); clearTimeout(pendingNext); clearTimeout(absentTimer); holdTimer = pendingNext = absentTimer = null;
-    curtainTok++; toCrane = false; nextReady = false;
+    for (const id of pend.keys()) clearTimeout(id); pend.clear(); holdTimer = pendingNext = absentTimer = null;
+    curtainTok++; toCrane = false; nextReady = false; SFX.motor(0, .5); SFX.roll(0); SFX.drum(0);
     buildGroups();
     if (board.busy) board.stop();
     setAct('order'); revealCan = null; lastMark = null; boardPending = null;
@@ -214,7 +219,7 @@
       say(t('s.wait')); return;
     }
     if (board.editing) setEditing(false);
-    clearTimeout(pendingNext); pendingNext = null;
+    cancel(pendingNext); pendingNext = null;
     if (order.length || orderReady) resetOrder();     // a half-set order belongs to the mode being left
     mode = m; try { localStorage.setItem('rcc-order-mode', m); } catch (e) {}
     applyMode();
@@ -243,8 +248,8 @@
       btn._t = setTimeout(() => { btn.classList.remove('arm'); btn.textContent = t(key); }, 3000);
     });
   }
-  armed($('#lbClear'), 'btn.clear', 'btn.clear2', () => { clearTimeout(pendingNext); pendingNext = null; board.clearMarks(); lastMark = null; boardIdle(); });
-  armed($('#lbRoster'), 'btn.load', 'btn.load2', () => { clearTimeout(pendingNext); pendingNext = null; board.setNames(rosterNames()); lastMark = null; boardIdle(); });
+  armed($('#lbClear'), 'btn.clear', 'btn.clear2', () => { cancel(pendingNext); pendingNext = null; board.clearMarks(); lastMark = null; boardIdle(); });
+  armed($('#lbRoster'), 'btn.load', 'btn.load2', () => { cancel(pendingNext); pendingNext = null; board.setNames(rosterNames()); lastMark = null; boardIdle(); });
   function boardText() {
     let n = 0;
     return `${t('copy.board')} · ${today()}\n` + board.marks.map(m => m.kind === 'here' ? `${++n}. ${m.name}` : `   ${m.name} (${t('copy.absent')})`).join('\n');
@@ -267,7 +272,7 @@
     SFX.unlock();
     if (mode === 'board') {
       if (!boardOn() || board.busy || board.editing || !$('#reveal').hidden || boardPending || landing) return;
-      clearTimeout(pendingNext); pendingNext = null;
+      cancel(pendingNext); pendingNext = null;
       if (!board.left) { boardIdle(); return; }
       board.clearWin(); board.pick(); return;
     }
@@ -282,7 +287,8 @@
     if (mode === 'wheel') wheel.spin();
     else if (race.state === 'ready') { $('#spin').disabled = true; race.start(); say(t('s.raceon')); }
   }
-  $('#spin').addEventListener('click', e => { spin(); release(e.currentTarget); });
+  let guardUntil = 0;                 // Skip sits where Spin is: the second click of a double click on Skip is not a Spin
+  $('#spin').addEventListener('click', e => { if (performance.now() < guardUntil) { release(e.currentTarget); return; } spin(); release(e.currentTarget); });
 
   // ---------- the list of order and picks ----------
   function renderRows(pop) {
@@ -319,7 +325,7 @@
     if (body.classList.contains('flow')) $('.cabinet').scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
   }
   function loadTurn(i) {
-    turn = i; results[i] = { pick: null, absent: [], none: false }; revealCan = null; lastMark = null;
+    turn = i; results[i] = { pick: null, absent: [], none: false }; revealCan = null; lastMark = null; cancel(pendingNext); pendingNext = null;
     const g = order[i], copies = copiesFor(g.members.length);
     machine.setRider(g.animal, bibOf(g));
     machine.play(g.members, g.name, copies);
@@ -367,7 +373,7 @@
     }
     const g = mode === 'board' ? null : (order[turn] || rv.group), A = g && animalOf(g.animal);
     if (A) { pg.save(); pg.translate(408, 500); A.draw(pg, { t: rv.t, mode: rv.pose, speed: 1, emotion: 'cheer', look: 0, bib: bibOf(g), scale: 1.45 }); pg.restore(); }
-    requestAnimationFrame(paintPortrait);
+    rv.raf = requestAnimationFrame(paintPortrait);
   }
   function fitName(el, maxW) {
     for (let s = 125; s >= 62; s -= 3) { el.style.fontStretch = s + '%'; if (el.scrollWidth <= maxW) return; }
@@ -394,10 +400,10 @@
     sfx('vacuum', 500);
     say(t(mode === 'board' ? 's.picked' : 's.chute'), can.name);
     if (mode !== 'board') renderRows();
-    if (!rv.running) { rv.running = true; rv.last = performance.now(); requestAnimationFrame(paintPortrait); }
-    setTimeout(() => { if (revealCan === can) { f.classList.add('in'); sfx('sting'); rv.pose = 'cheer'; } }, reduced ? 0 : T(1100));
-    setTimeout(() => { if (revealCan === can) l.classList.add('in'); }, reduced ? 0 : T(1550));
-    setTimeout(() => { if (revealCan === can) $('#rvKeys').classList.add('on'); }, reduced ? 0 : T(1800));
+    if (!rv.running) { rv.running = true; rv.last = performance.now(); cancelAnimationFrame(rv.raf); rv.raf = requestAnimationFrame(paintPortrait); }
+    later(() => { if (revealCan === can) { f.classList.add('in'); sfx('sting'); rv.pose = 'cheer'; rv.t = Math.max(rv.t, 1.2 / speed); } }, reduced ? 0 : T(1100));
+    later(() => { if (revealCan === can) l.classList.add('in'); }, reduced ? 0 : T(1550));
+    later(() => { if (revealCan === can) { $('#rvKeys').classList.add('on'); revealAt = -Infinity; } }, reduced ? 0 : T(1800));
   }
   function stamp(kind) {
     const st = $('#stamp'); st.textContent = t(kind === 'ok' ? 'stamp.present' : 'stamp.absent');
@@ -438,7 +444,8 @@
   }
   function crushCan(posed) {
     const t0 = performance.now();
-    const crush = now => { const k = Math.min(1, (now - t0) / 320); rv.squash = .62 * k * k; if (posed) rv.pose = 'worry'; if (k < 1) requestAnimationFrame(crush); };
+    const c0 = rv.can;
+    const crush = now => { if (rv.can !== c0) return; const k = Math.min(1, (now - t0) / 320); rv.squash = .62 * k * k; if (posed) rv.pose = 'worry'; if (k < 1) requestAnimationFrame(crush); };
     if (!reduced) requestAnimationFrame(crush); else rv.squash = .62;
   }
   function markAbsent() {
@@ -451,8 +458,8 @@
     lastMark = { kind: 'absent', turn, can };
     $('#undo').hidden = false;
     const g = order[turn];
-    clearTimeout(absentTimer);
-    absentTimer = setTimeout(() => {
+    cancel(absentTimer);
+    absentTimer = later(() => {
       absentTimer = null;
       rv.running = false; $('#reveal').hidden = true;
       machine.removeStudent(can.name);
@@ -461,7 +468,7 @@
       else {
         results[turn].none = true; renderRows();
         say(t('s.nobody'), g.name);
-        pendingNext = setTimeout(nextTurn, T(2400));
+        pendingNext = later(() => { pendingNext = null; nextTurn(); }, T(2400));
       }
     }, T(1300));
   }
@@ -477,10 +484,10 @@
     const holdMs = HOLD(3000), nx = $('#rvNext'); nx.innerHTML = '';
     nx.append(board.left - 1 ? t('n.left', { n: board.left - 1 }) : t('all.picked'));
     holdBar(nx, holdMs);
-    holdTimer = setTimeout(boardClose, holdMs);
+    holdTimer = later(boardClose, holdMs);
   }
   function boardClose() {
-    clearTimeout(holdTimer); holdTimer = null;
+    cancel(holdTimer); holdTimer = null;
     rv.running = false; $('#reveal').hidden = true;
     board.clearWin();
     return landPending().then(boardIdle);
@@ -500,15 +507,17 @@
     boardPending = { name: can.name, kind: 'absent' };
     lastMark = { kind: 'absent', board: true, can };
     $('#undo').hidden = false;
-    clearTimeout(absentTimer);
-    absentTimer = setTimeout(() => {
+    cancel(absentTimer);
+    absentTimer = later(() => {
       absentTimer = null;
       rv.running = false; $('#reveal').hidden = true; board.clearWin();
       landPending().then(() => {
         if (!boardOn()) return;
         if (board.left) {
           say(t('s.absent'), t('n.left', { n: board.left }));
-          pendingNext = setTimeout(() => { pendingNext = null; if (boardOn() && $('#reveal').hidden && !board.busy && !boardPending && !landing) board.pick(); }, T(700));
+          const again = () => { pendingNext = null; if (boardOn() && $('#reveal').hidden && !board.busy && !boardPending && !landing) board.pick(); };
+          if (performance.now() - skipAt < 600) { again(); skip(true); }       // skipped through the stamp: straight to the next name
+          else pendingNext = later(again, T(700));
         } else boardIdle();
       });
     }, T(1300));
@@ -518,7 +527,7 @@
     const m = lastMark;
     if (holdTimer && m && m.kind === 'here') {
       // still on the name: take the mark back and decide again
-      clearTimeout(holdTimer); holdTimer = null;
+      cancel(holdTimer); holdTimer = null;
       boardPending = null;
       revealCan = m.can; revealAt = 0; lastMark = null;
       $('#stamp').className = 'stamp'; $('#rvNext').innerHTML = ''; $('#undo').hidden = true;
@@ -527,7 +536,7 @@
       return;
     }
     if (absentTimer && m && m.kind === 'absent') {
-      clearTimeout(absentTimer); absentTimer = null;
+      cancel(absentTimer); absentTimer = null;
       boardPending = null;
       rv.squash = 0; revealCan = m.can; revealAt = 0; lastMark = null;
       $('#stamp').className = 'stamp'; $('#undo').hidden = true; $('#here').disabled = $('#absent').disabled = false;
@@ -536,7 +545,7 @@
     }
     // otherwise take back the most recent mark on the board (and stop a re-pick that has not started yet)
     if (board.busy || !$('#reveal').hidden || boardPending || landing) return;
-    clearTimeout(pendingNext); pendingNext = null;
+    cancel(pendingNext); pendingNext = null;
     const marks = board.marks, lastM = marks[marks.length - 1];
     if (!lastM) return;
     lastMark = null;
@@ -555,18 +564,18 @@
       say(t('s.undone'), m.can.name);
       renderRows();
     } else if (m.kind === 'absent' && (absentTimer || pendingNext || machine.mode === 'aim' || machine.mode === 'seek' || machine.mode === 'load')) {
-      clearTimeout(pendingNext); pendingNext = null;
+      cancel(pendingNext); pendingNext = null;
       const r = results[turn], i = r.absent.lastIndexOf(m.can.name);
       if (i >= 0) r.absent.splice(i, 1);
       r.none = false; lastMark = null;
       if (absentTimer) {
         // still on the reveal: cancel the exit, take the stamp back and let the teacher decide again
-        clearTimeout(absentTimer); absentTimer = null;
+        cancel(absentTimer); absentTimer = null;
         rv.squash = 0; rv.pose = 'cheer'; revealCan = m.can; revealAt = 0;
         $('#stamp').className = 'stamp'; $('#undo').hidden = true; $('#here').disabled = $('#absent').disabled = false;
       } else {
         machine.restoreStudent(m.can.name);
-        if (machine.mode !== 'aim' && machine.mode !== 'seek' && machine.mode !== 'load') machine.resume();
+        if ($('#reveal').hidden && machine.mode !== 'aim' && machine.mode !== 'seek' && machine.mode !== 'load') machine.resume();
       }
       say(t('s.undone'), m.can.name);
       renderRows();
@@ -575,6 +584,41 @@
   $('#here').addEventListener('click', e => { markHere(); release(e.currentTarget); });
   $('#absent').addEventListener('click', e => { markAbsent(); release(e.currentTarget); });
   $('#undo').addEventListener('click', e => { undo(); release(e.currentTarget); });
+
+  // ---------- skip ----------
+  // ends what is playing now with the result it was going to give (each game draws or simulates its result the
+  // same way), then runs the waiting beats up to the next thing the teacher decides
+  function flush() {
+    for (let n = 0; pend.size && n < 16; n++) { const [id, fn] = pend.entries().next().value; clearTimeout(id); pend.delete(id); fn(); }
+  }
+  function skippable() {
+    if (toCrane || !modalEl.hidden) return false;
+    if (pend.size) return true;
+    if (act === 'order') return mode === 'wheel' ? !!wheel.canSkip : mode === 'race' ? !!race.canSkip : !!board.canSkip;
+    return act === 'play' && revealEl.hidden && !!machine.canSkip;
+  }
+  let skipAt = -1e9;
+  function skip(force) {
+    if (!force && performance.now() - skipAt < 450) return false;   // a double click must not land on the next decision
+    if (!skippable() || !keys.hidden) return false;
+    let did = false;
+    const t0 = turn;
+    for (let n = 0; n < 4; n++) {
+      let step = false;
+      if (act === 'order' && mode === 'wheel' && wheel.canSkip) { step = wheel.skip(); ts = 1; }
+      else if (act === 'order' && mode === 'race' && race.canSkip) step = race.skip();
+      else if (mode === 'board' && board.canSkip) step = board.skip();
+      // a new group's crane still waits for START: the chain stops at it
+      else if (act === 'play' && $('#reveal').hidden && machine.canSkip && turn === t0 && (n === 0 || machine.armed)) step = machine.skip();
+      if (pend.size) { flush(); step = true; }
+      if (!step || turn !== t0) break;
+      did = true;
+    }
+    if (did) { skipAt = performance.now(); guardUntil = skipAt + 450; }
+    if (did) document.getAnimations().forEach(a => { if (a.effect && a.effect.target && a.effect.target.closest && a.effect.target.closest('#reveal')) a.finish(); });
+    return did;
+  }
+  $('#skip').addEventListener('click', e => { SFX.unlock(); skip(); release(e.currentTarget); });
 
   // ---------- teacher controls ----------
   function startNow() {
@@ -689,6 +733,8 @@
     if (k === '[' || k === '-') { setSpeed(speed - .25); e.preventDefault(); return; }
     if (k === ']' || k === '=' || k === '+') { setSpeed(speed + .25); e.preventDefault(); return; }
     if (lower === '?') { keys.hidden = false; e.preventDefault(); return; }
+    if (lower === 'k') { if (!e.repeat) skip(); e.preventDefault(); return; }
+    if ((k === ' ' || k === 'Enter') && e.target === skipBtn) { skip(); release(skipBtn); e.preventDefault(); return; }
     if (lower === 'z' || (k === 'Backspace' && !$('#reveal').hidden)) { undo(); e.preventDefault(); return; }
     if (lower === 'r' && act === 'order' && !order.length) { openRoster(); e.preventDefault(); return; }
     if (lower === 's' && mode === 'board' && $('#reveal').hidden) { shuffleBoard(); e.preventDefault(); return; }
@@ -706,14 +752,16 @@
     }
   });
   addEventListener('pointerdown', () => SFX.unlock(), { capture: true });
+  // a hidden tab stops drawing frames, so the looping sounds would hold their last level: pause the audio instead
+  document.addEventListener('visibilitychange', () => SFX.pause(document.hidden));
 
   // ---------- the loop: time, light, sound ----------
   const bulbRows = [...document.querySelectorAll('.bulbs')];
   bulbRows.forEach(row => { for (let i = 0; i < 18; i++) row.append(document.createElement('i')); });
   const bulbs = bulbRows.map(row => [...row.children]);
   const house = $('#house'), bars = [...document.querySelectorAll('.bars i')], cnt = $('#count'), startBtn = $('#start'), reveal = $('#reveal');
-  let last = performance.now(), ts = 1, drama = 0, shownDrama = -1, lastCount = 0, beat = 0, lightsDown = false, bulbKey = '', lightT = 0, drumLvl = 0, startGlow = false;
-  const DRUM = { seek: .2, lower: .42, close: .6, pause: .6, raise: .4, top: .5, carry: .32, release: .55, check: .3 };
+  let last = performance.now(), ts = 1, drama = 0, shownDrama = -1, lastCount = 0, beat = 0, lightsDown = false, bulbKey = '', lightT = 0, startGlow = false, skipShown = false;
+  const skipBtn = $('#skip');
   // the house light is centred on whatever the class is looking at; measured only when the layout changes
   function lightCenter() {
     const el = act === 'order' ? (mode === 'wheel' ? $('.wheelbox') : mode === 'race' ? $('.racebox') : $('.boardbox')) : $('.glass');
@@ -747,14 +795,14 @@
     lightT += rdt;
     if (lightDirty || lightT > 1) { lightT = 0; if (dq > 0 || lightDirty) lightCenter(); }
     // countdown numerals on the glass
+    const sk = skippable();
+    if (sk !== skipShown) { skipShown = sk; skipBtn.hidden = !sk; body.classList.toggle('canskip', sk); if (!sk && document.activeElement === skipBtn) stage.focus({ preventScroll: true }); }
     const waiting = act === 'play' && reveal.hidden && (machine.mode === 'aim' || machine.mode === 'load') && !machine.armed;
     if (waiting !== startGlow) { startGlow = waiting; startBtn.classList.toggle('ready', waiting); }
     if (act === 'play' && machine.mode === 'aim' && machine.armed) {
       const n = Math.max(1, Math.ceil(machine.timer / .6));
       if (n !== lastCount) { lastCount = n; cnt.textContent = n; cnt.classList.remove('tick'); void cnt.offsetWidth; cnt.classList.add('tick'); }
     } else if (lastCount) lastCount = 0;
-    const dr = act === 'play' && reveal.hidden && !reduced ? (DRUM[machine.mode] || 0) : 0;
-    if (dr !== drumLvl) { drumLvl = dr; SFX.drum(dr); }
     // heartbeat while the camera is close
     if (drama > .55 && !reduced) { beat += rdt * (1.2 + drama * .6); if (beat >= 1) { beat = 0; sfx('heart', drama); } } else beat = .6;
     // bulbs: chase when idle, all on during the countdown, dark during the grab; touched only when the pattern changes
@@ -773,7 +821,7 @@
   reset();
   requestAnimationFrame(frame);
   if (location.hash === '#debug') window.__claw = {
-    wheel, race, machine, board, get act() { return act; }, get mode() { return mode; }, get quality() { return { quality, dpr: STEPS[qStep], ema }; },
+    wheel, race, machine, board, skip, get canSkip() { return skippable(); }, get act() { return act; }, get mode() { return mode; }, get quality() { return { quality, dpr: STEPS[qStep], ema }; },
     tick(n = 60) { for (let i = 0; i < n; i++) { if (act === 'order' && mode === 'wheel') wheel.step(1 / 60, 1 / 60); else if (act === 'order' && mode === 'race') race.step(1 / 60); else if (act === 'order') board.step(1 / 60); else machine.frame(1 / 60, 1 / 60); } },
   };
 })();

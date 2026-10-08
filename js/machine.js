@@ -5,7 +5,8 @@
 // other cans (a tease, a swat that knocks one flying, or a grab it lifts and drops), then goes for the drawn
 // student's most reachable can. A miss or a slip retries the same name, so staging and physics never change
 // who gets picked. Inside the machine every can wears a "?" label: the name is shown only on the reveal.
-// The first pick of each group waits for START; the countdown runs after it.
+// The first pick of each group waits for START; the countdown runs after it. SKIP ends a pick on the spot:
+// the name already drawn (or drawn then, the same way) gets one of its cans, so the odds stay the same.
 // Lighting: one warm lamp at upper left front (ART.LIGHT) models every metal part; the trolley lamp throws
 // a cone down into the box and the rest of the interior falls into shadow as the drama rises.
 window.Machine = function (canvas, hooks) {
@@ -67,7 +68,7 @@ window.Machine = function (canvas, hooks) {
     name: null, target: null, aimOff: 0, under: null, dropped: null, jolt: 0, jolted: false, slipped: false, tries: 0, ratchet: 0,
     push: 0, benchT: 0, slips: 0, armed: false, fake: null };
   let cans = [], pick = null, pickT = 0, live = false, hard = false, rider = null, acc = 0, clock = 0;
-  let shake = 0, puffs = [], rev = 0, jig = 0, absentSlow = 0, lamp = .6, dark = .1, drama = 0;
+  let shake = 0, puffs = [], rev = 0, jig = 0, absentSlow = 0, lamp = .6, dark = .1, drama = 0, quiet = 0, unseen = false;
   const cam = { z: 1, x: W / 2, y: H / 2, slow: 1 };
   const motes = Array.from({ length: 70 }, () => ({ x: CHUTE_W * .5 + Math.random() * (W - CHUTE_W * .5), y: 50 + Math.random() * (FLOOR_Y - 50),
     r: .5 + Math.random() * .9, p: Math.random() * TAU, s: .3 + Math.random() * .7 }));
@@ -98,7 +99,7 @@ window.Machine = function (canvas, hooks) {
   const setClawCollide = (can, on) => { can.body.collisionFilter.mask = on ? MASK_ALL : MASK_NOCLAW; };
   function clearCans() { dropFake(); for (const k of cans) if (!k.gone) Composite.remove(world, k.body); cans = []; }
   function fill(names, pour) {
-    clearCans(); pick = null; pickT = 0;
+    clearCans(); pick = null; pickT = 0; quiet = 0;
     const [w, h] = sizeFor(names.length);
     const list = names.slice().sort(() => Math.random() - .5);
     const span = PILE_X1 - PILE_X0;
@@ -199,11 +200,13 @@ window.Machine = function (canvas, hooks) {
   }
   // FAIR: the name is drawn uniformly over the names still in the machine, however many cans each has
   // or wherever they lie. A retry keeps the drawn name.
+  const namesIn = () => [...new Set(inPlay().map(k => k.name))];
+  function drawName(names) { c.name = names[Math.random() * names.length | 0]; c.tries = 0; c.slips = 0; }
   function startPick(retry) {
-    const names = [...new Set(inPlay().map(k => k.name))];
+    const names = namesIn();
     if (!names.length) { c.name = null; setMode('reveal'); return; }
     for (const k of cans) k.fromClaw = false;
-    if (!retry || !c.name || !names.includes(c.name)) { c.name = names[Math.random() * names.length | 0]; c.tries = 0; c.slips = 0; }
+    if (!retry || !c.name || !names.includes(c.name)) drawName(names);
     else c.tries++;
     c.target = bestCan(c.name); c.plan = []; c.slipped = false; dropFake();
     if (!retry && names.length > 1) {
@@ -558,6 +561,34 @@ window.Machine = function (canvas, hooks) {
     Composite.add(world, k.body);
   }
   function doReveal() { setMode('reveal'); c.auto = null; c.plan = []; fire('onPick', pick, false); }
+  // SKIP: straight to the reveal. FAIR: a name already drawn keeps it (staging never changes who is picked);
+  // before the draw, the name is drawn now with startPick's own draw over the same names
+  const SKIPPABLE = new Set(['load', 'aim', 'seek', 'lower', 'close', 'pause', 'raise', 'top', 'carry', 'release', 'check']);
+  // a START wait is skipped only once it has been on screen, so a skip chain that loads the next group stops at its START
+  const skippable = () => live && c.mode !== 'reveal' && !(unseen && !c.armed) && (pick ? pickT > 0 : SKIPPABLE.has(c.mode) && inPlay().length > 0);
+  function skip() {
+    if (!skippable()) return false;
+    letGo(); dropFake();
+    if (!pick) {
+      const names = namesIn();
+      if (!c.name || !names.includes(c.name)) drawName(names);
+      const mine = k => k && cans.includes(k) && !k.gone && !k.leaving && !k.out && k.name === c.name;
+      const k = [c.dropped, c.target].find(mine) || bestCan(c.name);
+      if (anon) anonOf(k);
+      pick = k; k.out = true; k.fromClaw = true; Composite.remove(world, k.body); k.gone = true;
+      trace('skip', { name: k.name, mode: c.mode }); beat('fall');
+    }
+    pickT = 0;
+    // the pile keeps its cans where they lie; the claw goes home, up and open, and the box falls quiet
+    for (const k of cans) if (!k.gone && !k.leaving && !k.out) { k.fromClaw = false; if (k.body.collisionFilter.mask !== MASK_ALL) k.ghost = Math.max(k.ghost, .1); }
+    c.x = HOME_X; c.vx = 0; c.L = c.Lprev = c.ratchet = L_REST; c.th = 0; c.w = 0; c.open = .2; c.jolt = 0; c.contact = 0; c.push = 0;
+    c.auto = null; c.cand = null; c.target = null; c.plan = []; c.sub = ''; c.slipped = false; c.timer = 0; c.count = 0; c.armed = true;
+    placeClaw();
+    shake = rev = jig = absentSlow = c.benchT = 0; puffs = []; quiet = .5;
+    setMode('reveal'); moveCamera(30); fire('motor', 0, .5);
+    doReveal();
+    return true;
+  }
   // an absent student's other cans jump up and out of the machine and wait on the bench
   function removeStudent(name) {
     let n = 0;
@@ -587,7 +618,7 @@ window.Machine = function (canvas, hooks) {
       const A = p.bodyA, B = p.bodyB, ka = A.plugin && A.plugin.can, kb = B.plugin && B.plugin.can;
       if (!ka && !kb) continue;
       const v = Math.hypot(A.velocity.x - B.velocity.x, A.velocity.y - B.velocity.y) * 2;
-      if (v < 1.4) continue;
+      if (v < 1.4 || quiet > 0) continue;
       if (ka) ka.ring = .25; if (kb) kb.ring = .25;
       sfx('clank', v);
       const s = p.collision && p.collision.supports && p.collision.supports[0];
@@ -1543,7 +1574,7 @@ window.Machine = function (canvas, hooks) {
   function frame(simDt, realDt) {
     if (realDt == null) realDt = simDt;
     const rdt = clamp(realDt, 0, .05);
-    clock += rdt;
+    clock += rdt; unseen = false;
     if ((vis -= rdt) <= 0) { vis = .5; sizeCanvas(); }
     moveCamera(rdt);
     if (absentSlow > 0) absentSlow -= rdt;
@@ -1556,6 +1587,7 @@ window.Machine = function (canvas, hooks) {
       acc -= STEP;
     }
     if (pick && pickT > 0) { pickT -= rdt; if (pickT <= 0 && c.mode !== 'reveal') doReveal(); }
+    if (quiet > 0) quiet = inPlay().some(k => k.body.speed > .3) ? .5 : quiet - rdt;   // after a skip, silent until the pile has rested half a second
     shake = Math.max(0, shake - rdt * 28); rev = Math.max(0, rev - rdt); jig = Math.max(0, jig - rdt);
     for (const p of puffs) { p.vy += 900 * rdt; p.x += p.vx * rdt; p.y += p.vy * rdt; p.life -= rdt; }
     puffs = puffs.filter(p => p.life > 0);
@@ -1576,9 +1608,9 @@ window.Machine = function (canvas, hooks) {
     // copies: identical cans per student, the same count for everyone, so the odds stay equal
     play(names, label, copies = 1) {
       live = true; letGo(); c.auto = null; c.plan = []; c.name = null; c.target = null;
-      fill(names.flatMap(n => Array(Math.max(1, copies | 0)).fill(n)), true); setMode('load'); c.timer = COUNTDOWN; c.armed = false;
+      fill(names.flatMap(n => Array(Math.max(1, copies | 0)).fill(n)), true); setMode('load'); c.timer = COUNTDOWN; c.armed = false; unseen = true;
     },
-    resume() { pick = null; pickT = 0; letGo(); dropFake(); c.auto = null; c.plan = []; c.name = null; c.target = null; c.count = 0; setMode('aim'); c.timer = COUNTDOWN; c.armed = true; },
+    resume() { pick = null; pickT = 0; quiet = 0; letGo(); dropFake(); c.auto = null; c.plan = []; c.name = null; c.target = null; c.count = 0; setMode('aim'); c.timer = COUNTDOWN; c.armed = true; },
     // START: the first press starts the countdown (pressed during the pour, it starts once the cans land); a second press skips it
     go() {
       if (c.mode === 'load') { c.armed = true; return true; }
@@ -1587,6 +1619,9 @@ window.Machine = function (canvas, hooks) {
       return true;
     },
     get armed() { return !!c.armed; },
+    // SKIP: from the pour to the fall of the can, ends the pick at once and fires onPick (pressed on the START wait, it starts and skips)
+    skip,
+    get canSkip() { return skippable(); },
     get claw() { return { x: c.x, th: c.th, L: c.L, open: c.open }; },
     setAnon(v) { anon = !!v; },
     removeStudent,

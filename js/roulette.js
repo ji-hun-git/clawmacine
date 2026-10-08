@@ -21,8 +21,9 @@ window.Roulette = function (canvas, hooks) {
   let live = false, dragging = false, samples = [], lastA = 0, locked = false, launchIn = 0, winGroup = -1;
   const cam = { x: S / 2, y: S / 2, z: 1 };
   let drama = 0, slowS = 0, stop = 0, stT = 0, lastSt = 'rest', resT = -1, hang = 0, ticks = 0, winK = 0, dRel = ball.rel;
-  let shake = 0, seed = 7, scale = 1, dirty = true, frameN = 0, shown = true;
+  let shake = 0, seed = 7, scale = 1, dirty = true, frameN = 0, shown = true, quiet = false;
   const flash = new Array(DIAMONDS).fill(0), trail = [];
+  const fx = (...a) => !quiet && hooks.sfx && hooks.sfx(...a);
 
   const ps = () => TAU / Math.max(1, pockets.length);
 
@@ -55,7 +56,7 @@ window.Roulette = function (canvas, hooks) {
     ball.w = dir * (10.5 + Math.random() * 4);
     live = true; resT = -1; hang = 0; ticks = 0; winGroup = -1; winK = 0; trail.length = 0;
     hooks.onLaunch && hooks.onLaunch();
-    hooks.sfx && hooks.sfx('ballDrop');
+    fx('ballDrop');
   }
   function spin() {
     if (locked || live || dragging || launchIn || groups.length < 2) return false;
@@ -87,12 +88,12 @@ window.Roulette = function (canvas, hooks) {
           ball.w *= .5 + Math.random() * .6; if (Math.random() < .25) ball.w = -ball.w * .6;
           if (Math.abs(ball.w) < 1.2) ball.w = (Math.random() < .5 ? -1 : 1) * (1.2 + Math.random());
           flash[mod(k, DIAMONDS)] = .09; stop = Math.max(stop, .06); ball.hop = .7;
-          hooks.sfx && hooks.sfx('clack');
+          fx('clack');
         }
       }
       if (ball.r <= R_NUM0 - 2) {
         ball.st = 'pocket'; ball.rel = ball.a - rot; ball.relW = ball.w - rotW;
-        hooks.sfx && hooks.sfx('tick', 1.2);
+        fx('tick', 1.2);
       }
     } else if (ball.st === 'pocket') {
       const prevRel = ball.rel, s = Math.sign(ball.relW), d = BALL / ball.r;
@@ -107,7 +108,7 @@ window.Roulette = function (canvas, hooks) {
         }
         if (++ticks <= 2) stop = Math.max(stop, .04);
         shake = Math.max(shake, 1.5);
-        hooks.sfx && hooks.sfx('tick', Math.min(1.4, .4 + Math.abs(ball.relW) * .15));
+        fx('tick', Math.min(1.4, .4 + Math.abs(ball.relW) * .15));
       }
       const f = (1.8 + .45 * Math.abs(ball.relW)) * h;
       ball.relW = Math.abs(ball.relW) <= f ? 0 : ball.relW - Math.sign(ball.relW) * f;
@@ -142,6 +143,25 @@ window.Roulette = function (canvas, hooks) {
     const lvl = ball.st === 'track' ? Math.abs(ball.w) / 13 : ball.st === 'fall' ? .5 : ball.st === 'pocket' ? Math.min(.5, Math.abs(ball.relW) / 12) : 0;
     hooks.roll && hooks.roll(lvl);
     draw();
+  }
+
+  // the result still on stage: the hold on the pocket, the slow-motion wish, the lights coming back up
+  const staging = () => resT >= 0 && (resT < .4 || stop > 0 || slowS > 0 || drama > 0);
+  // the rest of the spin at once: the same fixed steps run to the result, unstaged and without per-step sound
+  function skip() {
+    if (!live && !(launchIn > 0) && !staging()) return false;
+    quiet = true;
+    try {
+      if (launchIn > 0) { for (let n = Math.round(launchIn / H); n > 0; n--) phys(); launchIn = 0; launch(); }
+      for (let n = 120 / H; live && n > 0; n--) phys();
+      if (live) { if (ball.st !== 'pocket') ball.rel = ball.a - rot; ball.r = R_P0 + BALL; ball.vr = 0; settle(); }
+    } finally { quiet = false; }
+    cam.x = cam.y = S / 2; cam.z = 1; drama = slowS = stop = shake = ball.hop = 0; trail.length = 0; flash.fill(0);
+    if (winGroup >= 0) { resT = .4; winK = 1; }
+    dRel = ball.rel; dirty = true;
+    hooks.roll && hooks.roll(0);
+    draw(true);
+    return true;
   }
 
   // ---- staging: camera, drama and the slow-motion wish, all on real time ----
@@ -617,9 +637,11 @@ window.Roulette = function (canvas, hooks) {
 
   return {
     setGroups(list) { build(list); draw(true); },
-    spin, step,
+    spin, step, skip,
     lock(v) { locked = !!v; },
     get busy() { return live || dragging || launchIn > 0; },
+    // a spin under way, a flick about to throw the ball or a result still on stage: skip() ends it now
+    get canSkip() { return live || launchIn > 0 || staging(); },
     // 0..1: how much the wheel wants the room dark and the eye on the ball (rises with the drop, peaks in the pocket)
     get drama() { return drama; },
     // 0..1: slow motion the wheel asks for, already eased; the director runs the wheel at timeScale = 1 - wantSlow

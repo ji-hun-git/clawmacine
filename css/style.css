@@ -252,10 +252,16 @@ body[data-mode="board"] .wheelbox,body[data-mode="board"] .racebox{display:none}
 body[data-mode="board"] .boardbox{display:block}
 body[data-mode="board"] .caption{left:1112px;top:118px;width:440px}
 body[data-mode="board"] #spin{left:1112px;top:300px}
+/* skip: takes the main button's place while something plays */
+.skip{left:980px;top:330px;z-index:2}
+body[data-mode="race"][data-act="order"] .skip{left:auto;right:40px;top:792px;font-size:22px;padding:12px 24px}
+body[data-mode="board"][data-act="order"] .skip{left:1112px;top:300px}
+body[data-act="play"] .skip{left:52px;top:360px}
+body.canskip[data-act="order"] #spin{visibility:hidden}
 body[data-mode="board"] .list{left:1112px;top:400px;width:440px}
 body[data-mode="board"] #hard{display:none}
 body.flow .boardbox,body.flow[data-mode="board"] .boardbox{position:relative;left:auto;top:auto;width:100%;height:auto;aspect-ratio:.8}
-body.flow .lb-frame{bottom:50px;border-radius:12px}
+body.flow .lb-frame{bottom:92px;border-radius:12px}
 body.flow .boardbox{perspective:610px}
 body.flow .nm small{font-size:max(8.5px,calc(var(--tf) * .46));letter-spacing:.04em}
 body.flow .tile .mark{font-size:max(10px,calc(var(--tf) * .62))}
@@ -263,7 +269,8 @@ body.flow .teacher>button,body.flow .teacher>.speed{padding:4px 8px}
 body.flow .lb-grid{left:12px;right:12px;top:26px;bottom:40px;gap:5px;padding:5px}
 body.flow .lb-frame .lb-bulbs{left:24px;right:24px;top:9px}
 body.flow .lb-plate{font-size:11px;letter-spacing:.18em;padding:5px 14px 3px;bottom:9px;white-space:nowrap}
-body.flow .lb-tools{font-size:13px;gap:16px;white-space:nowrap}
+body.flow .lb-tools{font-size:13px;gap:6px;flex-wrap:wrap;white-space:nowrap}
+body.flow .lb-tools button{padding:6px 10px}
 
 /* the picked tray: a walnut box with a felt bed beside the board */
 .tray{display:none;left:1112px;top:392px;width:440px;height:476px;border-radius:12px;padding:40px 16px 16px;
@@ -379,8 +386,8 @@ body.flow .caption{order:1}
 body.flow .cabinet{order:2}
 body.flow .list{order:3}
 body.flow .tray{order:3}
-body.flow .teacher{left:0;right:0;bottom:0;padding:10px 16px calc(10px + env(safe-area-inset-bottom,0px));background:var(--room);opacity:.95;gap:10px 18px}
-body.flow .stage{padding-bottom:130px}
+body.flow .teacher{left:0;right:0;top:auto;bottom:0;padding:10px 16px calc(10px + env(safe-area-inset-bottom,0px));background:var(--room);opacity:.95;gap:10px 18px}
+body.flow .stage{padding-bottom:190px}
 body.flow .act-order{display:flex;flex-direction:column;gap:16px}
 body.flow .wheelbox{position:static;width:100%;height:auto;aspect-ratio:1}
 body.flow .racebox{position:static;width:100%;height:auto;aspect-ratio:960/440}
@@ -400,6 +407,10 @@ body.flow .rows.big .who{font-size:28px}
 body.flow .reveal{grid-template-columns:1fr;align-content:center;padding:4vh 6vw 14vh}
 body.flow #portrait{max-height:38vh;width:auto}
 body.flow .count{font-size:160px}
+body.flow .stage>.skip{position:static;order:1;align-self:flex-start;font-size:20px;padding:14px 22px}
+body.flow[data-act="play"] .stage>.skip{order:2}
+body.flow.canskip[data-act="order"] #spin{display:none}
+body.flow .teacher{z-index:25}
 
 @media (prefers-reduced-motion:reduce){
   .count.tick,.rows li.pop,.reveal,.stamp.go,#rvFirst.in,#rvLast.in{animation-duration:.01s}
